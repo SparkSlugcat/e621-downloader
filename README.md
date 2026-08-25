@@ -12,6 +12,7 @@ It bundles 5 common download modes into one window — **no command-line knowled
 - **Resume support** — interrupted downloads continue where they left off
 - **Credential safety** — username & API key entered at every launch, never hardcoded; optional "remember" (plain text, stored locally)
 - **Proxy support** — auto-follows the Windows system proxy, or manual config
+- **Bilingual UI** — switch between 中文 / English anytime from the top-right corner
 
 ## Requirements
 
@@ -38,6 +39,16 @@ python app.py
 > Treat the API key as your account's API credential: never share it, and regenerate it on
 > the same page if it ever leaks.
 
+## Disclaimer
+
+- For personal study and lawful use only. **You are responsible for complying with the
+  e621 / e926 Terms of Service and API usage guidelines** (request rate, intended use, etc.).
+- ⚠️ **Avoid excessive usage**: frequent or massive API requests may lead to your account being
+  rate-limited or **banned**. The tool enforces a 1-second delay between requests by default,
+  but please download in batches for very large jobs and avoid running it continuously.
+- Use at your own risk. The author is not liable for downloaded content, account safety, or
+  account bans caused by violating platform rules.
+
 ---
 
 # E621 下载器（GUI 版）
@@ -57,6 +68,7 @@ python app.py
 | ♻️ 断点续传 | 中断后再次运行，自动跳过已下载文件继续 |
 | 🔑 凭据安全 | API 用户名 / Key 每次启动填写，不写入代码；可选"记住"（明文存本地） |
 | 🌐 代理支持 | 自动跟随系统代理，也支持手动配置 |
+| 🌍 中英双语 | 右上角一键切换 中文 / English 界面与日志 |
 
 ## 环境要求
 
@@ -94,6 +106,10 @@ python app.py
 
 需要代理才能访问外网时（例如本机运行 Clash 类代理软件），在"代理"一栏选择：
 
+> 🌍 **中国大陆用户请注意**：e621 在中国大陆**无法直接访问**，请自行准备可用的代理 / VPN
+> 工具，然后在"代理"一栏选择 **"自动（跟随系统）"** 或 **"自定义..."** 并填写代理地址，
+> 否则将无法连接服务器。
+
 - **自动（跟随系统）**（默认）：读取 Windows 系统代理设置，例如 `127.0.0.1:7897`；
 - **不使用代理**：直连，适合能直接访问 e621 的网络；
 - **自定义...**：手动填写代理地址，例如 `http://127.0.0.1:7897`。
@@ -110,7 +126,10 @@ python app.py
 ## 打包成独立 .exe（可选）
 
 双击 `build_exe.bat`（自动安装 PyInstaller 并打包），完成后双击
-`dist\E621下载器.exe` 即可，**无需安装 Python**。
+`dist\E621Downloader.exe` 即可，**无需安装 Python**。
+
+> 已打包的 exe 不会提交到仓库（见 `.gitignore`），而是发布在仓库的
+> **Releases** 页面供直接下载：仓库页 → Releases → 选择一个版本 → 下载附件。
 
 ## 文件结构
 
@@ -118,6 +137,7 @@ python app.py
 ├── app.py          # 图形界面入口
 ├── core.py         # 统一下载引擎（5 种下载方式的核心逻辑）
 ├── config.py       # "记住"功能的配置读写
+├── i18n.py         # 中英双语词库（界面 + 日志）
 ├── test_offline.py # 离线功能测试（模拟 API，无需联网）
 ├── README.md       # 说明文档（中英双语）
 ├── LICENSE         # MIT 许可证
@@ -134,8 +154,9 @@ python app.py
 
 ## 免责声明
 
-- 本工具仅供个人学习与合法用途，请遵守 e621 / e926 的服务条款与 API 使用规范（请求频率、用途等）；
-- 使用者需自行承担使用本工具产生的任何后果，作者不对下载内容及账号安全负责。
+- 本工具仅供个人学习与合法用途，**请自行遵守 e621 / e926 的服务条款（Terms of Service）与 API 使用规范**（请求频率、用途等）；
+- ⚠️ **请勿高频使用**：频繁、大量的 API 请求可能导致你的 e621 账号被**限流甚至封禁**。本工具默认已内置 1 秒请求间隔，但大批量下载时仍建议分批进行，切勿长时间连续运行；
+- 使用者需自行承担使用本工具产生的任何后果；作者不对下载内容、账号安全及因违反平台规则导致的封禁负责。
 
 ## 许可证
 
