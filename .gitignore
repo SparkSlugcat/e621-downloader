@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 打包产物（PyInstaller）
+dist/
+build/
+*.spec
+
+# 配置文件（若被误建在项目目录下，切勿提交）
+config.json
+
+# 日志与临时文件
+*.log
+*_test_out.txt
