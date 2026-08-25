@@ -11,6 +11,7 @@ E621 / E926 下载器（GUI 版）
   5. Pool 下载（反转编号）  (原 e621.py)
 
 API 用户名 / Key 每次启动时填写；勾选"记住"后下次自动填入（明文存本地）。
+界面语言可在右上角切换 中文 / English。
 运行方式：python app.py
 """
 
@@ -23,6 +24,7 @@ from tkinter import filedialog, messagebox, ttk
 
 import config as cfg
 import core
+import i18n
 
 # Windows 控制台编码兜底（防止中文报错乱码/编码异常）
 try:
@@ -31,175 +33,281 @@ try:
 except Exception:
     pass
 
-APP_TITLE = "E621 下载器 v1.0"
 SITES = ["https://e621.net", "https://e926.net"]
-PROXY_MODES = ["自动（跟随系统）", "不使用代理", "自定义..."]
+PROXY_KEYS = ("auto", "off", "custom")
 
 
 class E621App:
     def __init__(self, root: tk.Tk):
         self.root = root
-        root.title(APP_TITLE)
-        root.geometry("840x700")
-        root.minsize(740, 580)
+        root.geometry("940x700")
+        root.minsize(820, 580)
 
         self.msg_queue = queue.Queue()          # 工作线程 -> 界面 消息队列
         self.cancel_event = threading.Event()   # 停止信号
         self.worker = None                      # 当前工作线程
         self.current_task = None                # (函数, 参数字典)
 
+        self.lang_key = "zh"
+        self.proxy_mode_key = "auto"
+
+        self._init_vars()
+        self._load_saved_config()
+        self._build_ui()
+        root.after(100, self._poll_queue)
+
+    # ------------------------------------------------------------
+    # 工具
+    # ------------------------------------------------------------
+    def t(self, key: str, **kw) -> str:
+        return i18n.t(key, **kw)
+
+    def _save_config(self):
+        remember = bool(self.remember_var.get())
+        cfg.save({
+            "remember": remember,
+            "username": self.user_var.get().strip() if remember else "",
+            "api_key": self.key_var.get().strip() if remember else "",
+            "last_output": self._current_out_dir(),
+            "proxy_mode": self._current_proxy_key(),
+            "proxy_custom": self.proxy_custom_var.get().strip(),
+            "lang": self.lang_key,
+        })
+
+    def _load_saved_config(self):
+        data = cfg.load()
+        lang = data.get("lang", "zh")
+        self.lang_key = lang if lang in i18n.LANGS else "zh"
+        i18n.set_lang(self.lang_key)
+
+        if data.get("remember"):
+            self.user_var.set(data.get("username", ""))
+            self.key_var.set(data.get("api_key", ""))
+            self.remember_var.set(True)
+
+        mode = data.get("proxy_mode", "auto")
+        self.proxy_mode_key = mode if mode in PROXY_KEYS else "auto"
+        self.proxy_custom_var.set(data.get("proxy_custom", ""))
+
+        last = data.get("last_output", "")
+        if last:
+            for var in (self.out1_var, self.out2_var, self.out3_var, self.out4_var, self.out5_var):
+                var.set(last)
+
+    def _current_out_dir(self) -> str:
+        out_vars = (self.out1_var, self.out2_var, self.out3_var, self.out4_var, self.out5_var)
+        for v in out_vars:
+            if v.get().strip():
+                return v.get().strip()
+        return ""
+
+    def _current_proxy_key(self) -> str:
+        disp = self.proxy_mode_var.get()
+        for key in PROXY_KEYS:
+            if self.t("proxy_" + key) == disp:
+                return key
+        return "auto"
+
+    # ------------------------------------------------------------
+    # 变量（跨界面重建保留用户输入）
+    # ------------------------------------------------------------
+    def _init_vars(self):
+        self.site_var = tk.StringVar(value=SITES[0])
+        self.user_var = tk.StringVar()
+        self.key_var = tk.StringVar()
+        self.remember_var = tk.BooleanVar(value=False)
+        self.proxy_mode_var = tk.StringVar()
+        self.proxy_custom_var = tk.StringVar()
+
+        self.tags_var = tk.StringVar()
+        self.limit_var = tk.StringVar()
+        self.out1_var = tk.StringVar()
+        self.page_tags_var = tk.StringVar()
+        self.page_var = tk.StringVar()
+        self.out2_var = tk.StringVar()
+        self.artist_var = tk.StringVar()
+        self.out3_var = tk.StringVar()
+        self.skip_others_var = tk.BooleanVar(value=False)
+        self.pool1_var = tk.StringVar()
+        self.out4_var = tk.StringVar()
+        self.pool2_var = tk.StringVar()
+        self.out5_var = tk.StringVar()
+        self.status_var = tk.StringVar()
+
+    # ------------------------------------------------------------
+    # 界面构建（语言切换时整体重建）
+    # ------------------------------------------------------------
+    def _build_ui(self):
+        # 保留日志内容
+        log_text = ""
+        try:
+            if hasattr(self, "log_text"):
+                log_text = self.log_text.get("1.0", "end-1c")
+        except Exception:
+            log_text = ""
+
+        for attr in ("_auth_frame", "_notebook", "_action_frame", "_log_frame"):
+            w = getattr(self, attr, None)
+            if w is not None:
+                w.destroy()
+                setattr(self, attr, None)
+
+        self.root.title(self.t("app_title"))
         self._build_auth_bar()
         self._build_notebook()
         self._build_action_bar()
         self._build_log()
 
-        self._load_saved_config()
-        root.after(100, self._poll_queue)
+        if log_text:
+            self.log_text.configure(state="normal")
+            self.log_text.insert("1.0", log_text)
+            self.log_text.configure(state="disabled")
 
-    # ------------------------------------------------------------
-    # 界面构建
-    # ------------------------------------------------------------
-    def _build_auth_bar(self):
-        bar = ttk.LabelFrame(self.root, text=" 认证信息（每次启动填写；用户名和 Key 留空则游客访问） ")
-        bar.pack(fill="x", padx=10, pady=(10, 4))
-
-        self.site_var = tk.StringVar(value=SITES[0])
-        ttk.Label(bar, text="站点:").grid(row=0, column=0, padx=(8, 2), pady=6, sticky="e")
-        ttk.Combobox(bar, textvariable=self.site_var, width=18, state="readonly",
-                     values=SITES).grid(row=0, column=1, padx=2, pady=6, sticky="w")
-
-        ttk.Label(bar, text="用户名:").grid(row=0, column=2, padx=(16, 2), pady=6, sticky="e")
-        self.user_var = tk.StringVar()
-        ttk.Entry(bar, textvariable=self.user_var, width=14).grid(row=0, column=3, padx=2, pady=6, sticky="w")
-
-        ttk.Label(bar, text="API Key:").grid(row=0, column=4, padx=(16, 2), pady=6, sticky="e")
-        self.key_var = tk.StringVar()
-        ttk.Entry(bar, textvariable=self.key_var, width=24, show="*").grid(row=0, column=5, padx=2, pady=6, sticky="w")
-
-        self.remember_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(bar, text="记住（明文存本地）", variable=self.remember_var
-                        ).grid(row=0, column=6, padx=10, pady=6)
-        bar.columnconfigure(7, weight=1)
-
-        # ---- 第二行：代理设置 ----
-        ttk.Label(bar, text="代理:").grid(row=1, column=0, padx=(8, 2), pady=6, sticky="e")
-        self.proxy_mode_var = tk.StringVar(value=PROXY_MODES[0])
-        self.proxy_combo = ttk.Combobox(bar, textvariable=self.proxy_mode_var, width=18,
-                                        state="readonly", values=PROXY_MODES)
-        self.proxy_combo.grid(row=1, column=1, padx=2, pady=6, sticky="w")
-        self.proxy_combo.bind("<<ComboboxSelected>>", self._on_proxy_mode)
-
-        ttk.Label(bar, text="代理地址（自定义时填写）:").grid(row=1, column=2, padx=(16, 2), pady=6, sticky="e")
-        self.proxy_custom_var = tk.StringVar()
-        self.proxy_entry = ttk.Entry(bar, textvariable=self.proxy_custom_var, width=24)
-        self.proxy_entry.grid(row=1, column=3, columnspan=2, padx=2, pady=6, sticky="w")
-        self.proxy_hint = ttk.Label(bar, text="例: http://127.0.0.1:7897", foreground="gray")
-        self.proxy_hint.grid(row=1, column=5, padx=2, pady=6, sticky="w")
+        running = bool(self.worker and self.worker.is_alive())
+        if running:
+            self.status_var.set(self.t("status_running"))
+        else:
+            self.status_var.set(self.t("status_idle"))
+        self.start_btn.config(state="disabled" if running else "normal")
+        self.stop_btn.config(state="normal" if running else "disabled")
         self._on_proxy_mode()
 
-    def _on_proxy_mode(self, event=None):
-        """根据代理模式启用/禁用自定义地址输入框。"""
-        if self.proxy_mode_var.get() == "自定义...":
-            self.proxy_entry.config(state="normal")
-        else:
-            self.proxy_entry.config(state="disabled")
+    def _build_auth_bar(self):
+        bar = ttk.LabelFrame(self.root, text=self.t("auth_frame"))
+        bar.pack(fill="x", padx=10, pady=(10, 4))
+        self._auth_frame = bar
+
+        # ---- 行 0：语言 | 站点 | 用户名 | API Key ----
+        # 语言切换放在最左侧；每行内容都远小于窗口宽度，任何窗口大小都不会被裁剪
+        ttk.Label(bar, text=self.t("lang_label")).grid(row=0, column=0, padx=(8, 2), pady=6, sticky="e")
+        self.lang_var = tk.StringVar(value=i18n.LANG_NAMES[0 if self.lang_key == "zh" else 1])
+        lang_cb = ttk.Combobox(bar, textvariable=self.lang_var, width=9, state="readonly",
+                               values=list(i18n.LANG_NAMES))
+        lang_cb.grid(row=0, column=1, padx=2, pady=6, sticky="w")
+        lang_cb.bind("<<ComboboxSelected>>", self._on_lang_change)
+
+        ttk.Label(bar, text=self.t("site_label")).grid(row=0, column=2, padx=(14, 2), pady=6, sticky="e")
+        ttk.Combobox(bar, textvariable=self.site_var, width=18, state="readonly",
+                     values=SITES).grid(row=0, column=3, padx=2, pady=6, sticky="w")
+
+        ttk.Label(bar, text=self.t("user_label")).grid(row=0, column=4, padx=(14, 2), pady=6, sticky="e")
+        ttk.Entry(bar, textvariable=self.user_var, width=14).grid(row=0, column=5, padx=2, pady=6, sticky="w")
+
+        ttk.Label(bar, text=self.t("key_label")).grid(row=0, column=6, padx=(14, 2), pady=6, sticky="e")
+        ttk.Entry(bar, textvariable=self.key_var, width=20, show="*").grid(row=0, column=7, padx=2, pady=6, sticky="w")
+
+        # ---- 行 1：记住 | 代理模式 ----
+        ttk.Checkbutton(bar, text=self.t("remember"), variable=self.remember_var
+                        ).grid(row=1, column=0, columnspan=2, padx=(8, 2), pady=6, sticky="w")
+
+        ttk.Label(bar, text=self.t("proxy_label")).grid(row=1, column=2, padx=(14, 2), pady=6, sticky="e")
+        self.proxy_mode_var.set(self.t("proxy_" + self.proxy_mode_key))
+        proxy_cb = ttk.Combobox(bar, textvariable=self.proxy_mode_var, width=18, state="readonly",
+                                values=[self.t("proxy_" + k) for k in PROXY_KEYS])
+        proxy_cb.grid(row=1, column=3, padx=2, pady=6, sticky="w")
+        proxy_cb.bind("<<ComboboxSelected>>", self._on_proxy_mode)
+
+        # ---- 行 2：代理地址 ----
+        ttk.Label(bar, text=self.t("proxy_addr_label")).grid(row=2, column=2, padx=(14, 2), pady=6, sticky="e")
+        self.proxy_entry = ttk.Entry(bar, textvariable=self.proxy_custom_var, width=24)
+        self.proxy_entry.grid(row=2, column=3, padx=2, pady=6, sticky="w")
+        ttk.Label(bar, text=self.t("proxy_hint"), foreground="gray").grid(row=2, column=4, padx=2, pady=6, sticky="w")
+
+        bar.columnconfigure(8, weight=1)
 
     def _build_notebook(self):
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill="x", padx=10, pady=4)
+        self._notebook = self.notebook
 
-        # ---- Tab 1：标签下载（原 e6_scraper.py）----
+        def bind_enter(entry):
+            entry.bind("<Return>", lambda e: self._start())
+
+        # ---- Tab 1：标签下载 ----
         f1 = ttk.Frame(self.notebook, padding=8)
-        self.notebook.add(f1, text="① 标签下载")
-        ttk.Label(f1, text="搜索标签:").grid(row=0, column=0, sticky="e", pady=4)
-        self.tags_var = tk.StringVar()
-        ttk.Entry(f1, textvariable=self.tags_var, width=52).grid(row=0, column=1, columnspan=3, sticky="we", pady=4)
-        ttk.Label(f1, text="数量限制（留空=全部）:").grid(row=1, column=0, sticky="e", pady=4)
-        self.limit_var = tk.StringVar()
+        self.notebook.add(f1, text=self.t("tab_tag"))
+        ttk.Label(f1, text=self.t("tags_label")).grid(row=0, column=0, sticky="e", pady=4)
+        e1 = ttk.Entry(f1, textvariable=self.tags_var, width=52)
+        e1.grid(row=0, column=1, columnspan=3, sticky="we", pady=4)
+        bind_enter(e1)
+        ttk.Label(f1, text=self.t("limit_label")).grid(row=1, column=0, sticky="e", pady=4)
         ttk.Entry(f1, textvariable=self.limit_var, width=10).grid(row=1, column=1, sticky="w", pady=4)
-        ttk.Label(f1, text="输出目录（留空=自动）:").grid(row=2, column=0, sticky="e", pady=4)
-        self.out1_var = tk.StringVar()
+        ttk.Label(f1, text=self.t("out_label")).grid(row=2, column=0, sticky="e", pady=4)
         ttk.Entry(f1, textvariable=self.out1_var, width=40).grid(row=2, column=1, columnspan=2, sticky="we", pady=4)
-        ttk.Button(f1, text="浏览...", command=lambda: self._pick_dir(self.out1_var)).grid(row=2, column=3, padx=4)
-        ttk.Label(f1, text="示例: aubrey_(iceink) 或 aubrey_(iceink) order:hot",
-                  foreground="gray").grid(row=3, column=1, columnspan=3, sticky="w")
+        ttk.Button(f1, text=self.t("browse"), command=lambda: self._pick_dir(self.out1_var)).grid(row=2, column=3, padx=4)
+        ttk.Label(f1, text=self.t("hint_tags"), foreground="gray").grid(row=3, column=1, columnspan=3, sticky="w")
         f1.columnconfigure(2, weight=1)
 
-        # ---- Tab 2：标签分页下载（原 e6_taged_page_scraper.py）----
+        # ---- Tab 2：标签分页下载 ----
         f2 = ttk.Frame(self.notebook, padding=8)
-        self.notebook.add(f2, text="② 标签分页下载")
-        ttk.Label(f2, text="搜索标签:").grid(row=0, column=0, sticky="e", pady=4)
-        self.page_tags_var = tk.StringVar()
-        ttk.Entry(f2, textvariable=self.page_tags_var, width=52).grid(row=0, column=1, columnspan=3, sticky="we", pady=4)
-        ttk.Label(f2, text="页码（留空=全部页）:").grid(row=1, column=0, sticky="e", pady=4)
-        self.page_var = tk.StringVar()
+        self.notebook.add(f2, text=self.t("tab_tag_page"))
+        ttk.Label(f2, text=self.t("tags_label")).grid(row=0, column=0, sticky="e", pady=4)
+        e2 = ttk.Entry(f2, textvariable=self.page_tags_var, width=52)
+        e2.grid(row=0, column=1, columnspan=3, sticky="we", pady=4)
+        bind_enter(e2)
+        ttk.Label(f2, text=self.t("page_label")).grid(row=1, column=0, sticky="e", pady=4)
         ttk.Entry(f2, textvariable=self.page_var, width=10).grid(row=1, column=1, sticky="w", pady=4)
-        ttk.Label(f2, text="输出目录（留空=自动）:").grid(row=2, column=0, sticky="e", pady=4)
-        self.out2_var = tk.StringVar()
+        ttk.Label(f2, text=self.t("out_label")).grid(row=2, column=0, sticky="e", pady=4)
         ttk.Entry(f2, textvariable=self.out2_var, width=40).grid(row=2, column=1, columnspan=2, sticky="we", pady=4)
-        ttk.Button(f2, text="浏览...", command=lambda: self._pick_dir(self.out2_var)).grid(row=2, column=3, padx=4)
-        ttk.Label(f2, text="填入页码则只下载该页（每页最多 320 张），留空则下载全部",
-                  foreground="gray").grid(row=3, column=1, columnspan=3, sticky="w")
+        ttk.Button(f2, text=self.t("browse"), command=lambda: self._pick_dir(self.out2_var)).grid(row=2, column=3, padx=4)
+        ttk.Label(f2, text=self.t("hint_page"), foreground="gray").grid(row=3, column=1, columnspan=3, sticky="w")
         f2.columnconfigure(2, weight=1)
 
-        # ---- Tab 3：艺术家分组下载（原 e6_artist.py）----
+        # ---- Tab 3：艺术家分组下载 ----
         f3 = ttk.Frame(self.notebook, padding=8)
-        self.notebook.add(f3, text="③ 艺术家分组下载")
-        ttk.Label(f3, text="艺术家标签:").grid(row=0, column=0, sticky="e", pady=4)
-        self.artist_var = tk.StringVar()
-        ttk.Entry(f3, textvariable=self.artist_var, width=52).grid(row=0, column=1, columnspan=3, sticky="we", pady=4)
-        ttk.Label(f3, text="输出目录（留空=自动）:").grid(row=1, column=0, sticky="e", pady=4)
-        self.out3_var = tk.StringVar()
+        self.notebook.add(f3, text=self.t("tab_artist"))
+        ttk.Label(f3, text=self.t("artist_label")).grid(row=0, column=0, sticky="e", pady=4)
+        e3 = ttk.Entry(f3, textvariable=self.artist_var, width=52)
+        e3.grid(row=0, column=1, columnspan=3, sticky="we", pady=4)
+        bind_enter(e3)
+        ttk.Label(f3, text=self.t("out_label")).grid(row=1, column=0, sticky="e", pady=4)
         ttk.Entry(f3, textvariable=self.out3_var, width=40).grid(row=1, column=1, columnspan=2, sticky="we", pady=4)
-        ttk.Button(f3, text="浏览...", command=lambda: self._pick_dir(self.out3_var)).grid(row=1, column=3, padx=4)
-        self.skip_others_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(f3, text="跳过不属于任何 Pool 的帖子（只下池内作品）",
-                        variable=self.skip_others_var).grid(row=2, column=1, columnspan=3, sticky="w", pady=4)
-        ttk.Label(f3, text="按 Pool 分文件夹保存，非池作品存到 others 文件夹",
-                  foreground="gray").grid(row=3, column=1, columnspan=3, sticky="w")
+        ttk.Button(f3, text=self.t("browse"), command=lambda: self._pick_dir(self.out3_var)).grid(row=1, column=3, padx=4)
+        ttk.Checkbutton(f3, text=self.t("skip_others"), variable=self.skip_others_var
+                        ).grid(row=2, column=1, columnspan=3, sticky="w", pady=4)
+        ttk.Label(f3, text=self.t("hint_artist"), foreground="gray").grid(row=3, column=1, columnspan=3, sticky="w")
         f3.columnconfigure(2, weight=1)
 
-        # ---- Tab 4：Pool 下载（顺序编号，原 pool_scraper.py）----
+        # ---- Tab 4：Pool 下载（顺序编号）----
         f4 = ttk.Frame(self.notebook, padding=8)
-        self.notebook.add(f4, text="④ Pool 下载（顺序）")
-        ttk.Label(f4, text="Pool 链接:").grid(row=0, column=0, sticky="e", pady=4)
-        self.pool1_var = tk.StringVar()
-        ttk.Entry(f4, textvariable=self.pool1_var, width=52).grid(row=0, column=1, columnspan=3, sticky="we", pady=4)
-        ttk.Label(f4, text="输出目录（留空=自动）:").grid(row=1, column=0, sticky="e", pady=4)
-        self.out4_var = tk.StringVar()
+        self.notebook.add(f4, text=self.t("tab_pool_seq"))
+        ttk.Label(f4, text=self.t("pool_url_label")).grid(row=0, column=0, sticky="e", pady=4)
+        e4 = ttk.Entry(f4, textvariable=self.pool1_var, width=52)
+        e4.grid(row=0, column=1, columnspan=3, sticky="we", pady=4)
+        bind_enter(e4)
+        ttk.Label(f4, text=self.t("out_label")).grid(row=1, column=0, sticky="e", pady=4)
         ttk.Entry(f4, textvariable=self.out4_var, width=40).grid(row=1, column=1, columnspan=2, sticky="we", pady=4)
-        ttk.Button(f4, text="浏览...", command=lambda: self._pick_dir(self.out4_var)).grid(row=1, column=3, padx=4)
-        ttk.Label(f4, text="例如 https://e621.net/pools/12345，图片按 1.jpg, 2.png ... 顺序命名",
-                  foreground="gray").grid(row=2, column=1, columnspan=3, sticky="w")
+        ttk.Button(f4, text=self.t("browse"), command=lambda: self._pick_dir(self.out4_var)).grid(row=1, column=3, padx=4)
+        ttk.Label(f4, text=self.t("hint_pool_seq"), foreground="gray").grid(row=2, column=1, columnspan=3, sticky="w")
         f4.columnconfigure(2, weight=1)
 
-        # ---- Tab 5：Pool 下载（反转编号，原 e621.py）----
+        # ---- Tab 5：Pool 下载（反转编号）----
         f5 = ttk.Frame(self.notebook, padding=8)
-        self.notebook.add(f5, text="⑤ Pool 下载（反转）")
-        ttk.Label(f5, text="Pool 链接:").grid(row=0, column=0, sticky="e", pady=4)
-        self.pool2_var = tk.StringVar()
-        ttk.Entry(f5, textvariable=self.pool2_var, width=52).grid(row=0, column=1, columnspan=3, sticky="we", pady=4)
-        ttk.Label(f5, text="输出目录（留空=自动）:").grid(row=1, column=0, sticky="e", pady=4)
-        self.out5_var = tk.StringVar()
+        self.notebook.add(f5, text=self.t("tab_pool_rev"))
+        ttk.Label(f5, text=self.t("pool_url_label")).grid(row=0, column=0, sticky="e", pady=4)
+        e5 = ttk.Entry(f5, textvariable=self.pool2_var, width=52)
+        e5.grid(row=0, column=1, columnspan=3, sticky="we", pady=4)
+        bind_enter(e5)
+        ttk.Label(f5, text=self.t("out_label")).grid(row=1, column=0, sticky="e", pady=4)
         ttk.Entry(f5, textvariable=self.out5_var, width=40).grid(row=1, column=1, columnspan=2, sticky="we", pady=4)
-        ttk.Button(f5, text="浏览...", command=lambda: self._pick_dir(self.out5_var)).grid(row=1, column=3, padx=4)
-        ttk.Label(f5, text="Pool 中最后一张 -> 1.jpg，倒数第二张 -> 2.png ...（倒序编号）",
-                  foreground="gray").grid(row=2, column=1, columnspan=3, sticky="w")
+        ttk.Button(f5, text=self.t("browse"), command=lambda: self._pick_dir(self.out5_var)).grid(row=1, column=3, padx=4)
+        ttk.Label(f5, text=self.t("hint_pool_rev"), foreground="gray").grid(row=2, column=1, columnspan=3, sticky="w")
         f5.columnconfigure(2, weight=1)
 
     def _build_action_bar(self):
         bar = ttk.Frame(self.root)
         bar.pack(fill="x", padx=10, pady=6)
-        self.start_btn = ttk.Button(bar, text="▶ 开始下载", command=self._start)
+        self._action_frame = bar
+        self.start_btn = ttk.Button(bar, text=self.t("start_btn"), command=self._start)
         self.start_btn.pack(side="left")
-        self.stop_btn = ttk.Button(bar, text="■ 停止", command=self._stop, state="disabled")
+        self.stop_btn = ttk.Button(bar, text=self.t("stop_btn"), command=self._stop, state="disabled")
         self.stop_btn.pack(side="left", padx=8)
-        self.status_var = tk.StringVar(value="空闲")
         ttk.Label(bar, textvariable=self.status_var).pack(side="left", padx=12)
 
     def _build_log(self):
-        frame = ttk.LabelFrame(self.root, text=" 运行日志 ")
+        frame = ttk.LabelFrame(self.root, text=self.t("log_frame"))
         frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self._log_frame = frame
         self.log_text = tk.Text(frame, wrap="word", state="disabled",
                                 font=("Microsoft YaHei UI", 9))
         sb = ttk.Scrollbar(frame, command=self.log_text.yview)
@@ -208,26 +316,25 @@ class E621App:
         self.log_text.pack(side="left", fill="both", expand=True)
 
     # ------------------------------------------------------------
-    # 配置读写
+    # 事件处理
     # ------------------------------------------------------------
-    def _load_saved_config(self):
-        data = cfg.load()
-        if data.get("remember"):
-            self.user_var.set(data.get("username", ""))
-            self.key_var.set(data.get("api_key", ""))
-            self.remember_var.set(True)
-        last = data.get("last_output", "")
-        if last:
-            for var in (self.out1_var, self.out2_var, self.out3_var, self.out4_var, self.out5_var):
-                var.set(last)
-        mode = data.get("proxy_mode", "")
-        if mode in PROXY_MODES:
-            self.proxy_mode_var.set(mode)
-        self.proxy_custom_var.set(data.get("proxy_custom", ""))
-        self._on_proxy_mode()
+    def _on_lang_change(self, event=None):
+        new_key = "zh" if self.lang_var.get() == i18n.LANG_NAMES[0] else "en"
+        if new_key == self.lang_key:
+            return
+        self.lang_key = new_key
+        i18n.set_lang(new_key)
+        self._save_config()
+        self.log(self.t("msg_lang_switched",
+                        lang="中文" if new_key == "zh" else "English"))
+        self._build_ui()
+
+    def _on_proxy_mode(self, event=None):
+        custom = self._current_proxy_key() == "custom"
+        self.proxy_entry.config(state="normal" if custom else "disabled")
 
     def _pick_dir(self, var: tk.StringVar):
-        d = filedialog.askdirectory(title="选择输出目录")
+        d = filedialog.askdirectory(title=self.t("out_label"))
         if d:
             var.set(d)
 
@@ -255,14 +362,14 @@ class E621App:
 
     def _start(self):
         if self.worker and self.worker.is_alive():
-            messagebox.showinfo("提示", "任务正在运行中，请先停止或等待完成。")
+            messagebox.showinfo(self.t("app_title"), self.t("msg_running"))
             return
 
         tab = self.notebook.index(self.notebook.select())
         try:
             fn, kwargs, out_dir = self._collect_params(tab)
         except ValueError as e:
-            messagebox.showwarning("参数错误", str(e))
+            messagebox.showwarning(self.t("msg_param_error"), str(e))
             return
 
         self.current_task = (fn, kwargs)
@@ -270,27 +377,17 @@ class E621App:
         self.worker = threading.Thread(target=self._worker, daemon=True)
         self.start_btn.config(state="disabled")
         self.stop_btn.config(state="normal")
-        self.status_var.set("运行中...")
+        self.status_var.set(self.t("status_running"))
         self.worker.start()
-
-        # 保存配置（记住或上次输出目录）
-        remember = bool(self.remember_var.get())
-        cfg.save({
-            "remember": remember,
-            "username": self.user_var.get().strip() if remember else "",
-            "api_key": self.key_var.get().strip() if remember else "",
-            "last_output": out_dir or "",
-            "proxy_mode": self.proxy_mode_var.get(),
-            "proxy_custom": self.proxy_custom_var.get().strip(),
-        })
+        self._save_config()
 
     def _collect_params(self, tab: int):
         """按当前选项卡收集参数，返回 (函数, kwargs, 输出目录字符串)。"""
         if tab == 0:    # 标签下载
             tags = self.tags_var.get().strip()
             if not tags:
-                raise ValueError("请填写搜索标签。")
-            limit = self._parse_int(self.limit_var.get(), "数量限制")
+                raise ValueError(self.t("msg_need_tags"))
+            limit = self._parse_int(self.limit_var.get(), self.t("field_limit"))
             out = self.out1_var.get().strip()
             return (core.download_by_tags,
                     dict(tags=tags, output_dir=out or None, limit=limit, page=None, workers=1),
@@ -299,8 +396,8 @@ class E621App:
         if tab == 1:    # 标签分页下载
             tags = self.page_tags_var.get().strip()
             if not tags:
-                raise ValueError("请填写搜索标签。")
-            page = self._parse_int(self.page_var.get(), "页码")
+                raise ValueError(self.t("msg_need_tags"))
+            page = self._parse_int(self.page_var.get(), self.t("field_page"))
             out = self.out2_var.get().strip()
             return (core.download_by_tags,
                     dict(tags=tags, output_dir=out or None, limit=None, page=page, workers=2),
@@ -309,7 +406,7 @@ class E621App:
         if tab == 2:    # 艺术家分组下载
             artist = self.artist_var.get().strip()
             if not artist:
-                raise ValueError("请填写艺术家标签。")
+                raise ValueError(self.t("msg_need_artist"))
             out = self.out3_var.get().strip()
             return (core.download_artist,
                     dict(artist_tag=artist, output_root=out or None,
@@ -319,18 +416,18 @@ class E621App:
         if tab == 3:    # Pool 顺序
             url = self.pool1_var.get().strip()
             if not url or "/pools/" not in url:
-                raise ValueError("请填写合法的 Pool 链接（应包含 /pools/）。")
+                raise ValueError(self.t("msg_need_pool"))
             out = self.out4_var.get().strip()
             return (core.download_pool, dict(pool_url=url, output_dir=out or None, reverse=False), out)
 
         if tab == 4:    # Pool 反转
             url = self.pool2_var.get().strip()
             if not url or "/pools/" not in url:
-                raise ValueError("请填写合法的 Pool 链接（应包含 /pools/）。")
+                raise ValueError(self.t("msg_need_pool"))
             out = self.out5_var.get().strip()
             return (core.download_pool, dict(pool_url=url, output_dir=out or None, reverse=True), out)
 
-        raise ValueError("未知的选项卡。")
+        raise ValueError(self.t("msg_unknown_tab"))
 
     @staticmethod
     def _parse_int(s: str, label: str):
@@ -340,9 +437,9 @@ class E621App:
         try:
             v = int(s)
         except ValueError:
-            raise ValueError(f"{label}必须是整数。")
+            raise ValueError(i18n.t("msg_limit_int", label=label))
         if v <= 0:
-            raise ValueError(f"{label}必须是正整数。")
+            raise ValueError(i18n.t("msg_limit_pos", label=label))
         return v
 
     def _worker(self):
@@ -351,35 +448,34 @@ class E621App:
             key = self.key_var.get().strip()
             base = self.site_var.get()
 
-            # 代理设置
-            mode = self.proxy_mode_var.get()
-            if mode == "不使用代理":
+            mode = self.proxy_mode_key
+            if mode == "off":
                 proxy = "off"
-            elif mode == "自定义...":
+            elif mode == "custom":
                 proxy = self.proxy_custom_var.get().strip() or "off"
             else:
                 proxy = "auto"
             session = core.create_session(user, key, base, proxy=proxy)
 
             if session.proxies:
-                self.log(f"已启用代理: {list(session.proxies.values())[0]}")
+                self.log(self.t("msg_proxy_enabled", p=list(session.proxies.values())[0]))
             else:
-                self.log("未使用代理（直连）")
+                self.log(self.t("msg_proxy_direct"))
             if user and key:
-                self.log(f"已使用认证信息登录 {base}")
+                self.log(self.t("msg_logged_in", site=base))
             else:
-                self.log(f"警告：用户名/API Key 为空，以游客身份访问 {base}（部分内容可能受限）")
+                self.log(self.t("msg_guest", site=base))
 
             fn, kwargs = self.current_task
             self.log("=" * 40)
-            self.log(f"开始任务：{getattr(fn, '__name__', str(fn))}")
+            self.log(self.t("msg_task_start", name=getattr(fn, "__name__", str(fn))))
             try:
                 fn(session, log=self.log, cancel=self.cancel_event, **kwargs)
-                self.log("\n===== 任务结束 =====")
+                self.log("\n" + self.t("msg_task_done"))
             except Exception as e:
-                self.log(f"\n任务出错: {e}")
+                self.log("\n" + self.t("msg_task_error", err=e))
         except Exception as e:
-            self.log(f"\n初始化失败: {e}")
+            self.log("\n" + self.t("msg_init_error", err=e))
         finally:
             self.msg_queue.put(("done", None))
 
@@ -387,14 +483,14 @@ class E621App:
         self.start_btn.config(state="normal")
         self.stop_btn.config(state="disabled")
         if self.cancel_event.is_set():
-            self.status_var.set("已停止")
+            self.status_var.set(self.t("status_stopped"))
         else:
-            self.status_var.set("完成（空闲）")
+            self.status_var.set(self.t("status_done"))
 
     def _stop(self):
         self.cancel_event.set()
-        self.status_var.set("正在停止...（等待当前请求结束）")
-        self.log("已请求停止，将在当前下载完成后中止。")
+        self.status_var.set(self.t("status_stopping"))
+        self.log(self.t("msg_stop_requested"))
 
 
 def main():
