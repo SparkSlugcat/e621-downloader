@@ -11,6 +11,7 @@ e621 / e926 统一下载引擎
     e621.py                  ->  download_pool(reverse=True)
 
 API 用户名 / Key 由调用方传入（不再硬编码），留空则以游客身份访问。
+日志文案通过 i18n 模块支持中英双语（默认中文，可用 i18n.set_lang("en") 切换）。
 """
 
 import os
@@ -25,6 +26,8 @@ from typing import Callable, List, Optional, Tuple
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
+
+import i18n
 
 # ---------- 默认配置 ----------
 POSTS_PER_REQUEST = 320          # API 单次最多帖子数
@@ -168,7 +171,7 @@ def extract_pool_id(pool_url: str) -> str:
         idx = parts.index("pools")
         if idx + 1 < len(parts):
             return parts[idx + 1]
-    raise ValueError(f"无法从 URL 中提取 Pool ID: {pool_url}")
+    raise ValueError(i18n.t("core_pool_url_invalid", url=pool_url))
 
 
 def find_existing_max(out_dir: Path) -> int:
@@ -190,7 +193,7 @@ def find_existing_max(out_dir: Path) -> int:
 
 def _cancelled(cancel: CancelEvent, log: LogFunc = print) -> bool:
     if cancel is not None and cancel.is_set():
-        log("已收到停止请求，任务中止。")
+        log(i18n.t("core_cancelled"))
         return True
     return False
 
@@ -201,11 +204,13 @@ def _cancelled(cancel: CancelEvent, log: LogFunc = print) -> bool:
 
 def fetch_post_ids(session: requests.Session, tags: str,
                    limit: Optional[int] = None, page: Optional[int] = None,
+                   page_size: Optional[int] = None,
                    log: LogFunc = print, cancel: CancelEvent = None) -> List[int]:
     """获取匹配标签的所有帖子 ID（自动翻页）。
 
-    page:  指定页码则只返回该页；不指定则遍历所有页。
-    limit: 只取前 N 个帖子（与 page 同用时不建议）。
+    page:      指定页码则只返回该页；不指定则遍历所有页。
+    limit:     只取前 N 个帖子（与 page 同用时不建议）。
+    page_size: 指定单页帖子数（仅与 page 搭配时生效，如 40/80/120/200/320）。
     """
     all_ids: List[int] = []
     current_page = page if page else 1
@@ -214,7 +219,10 @@ def fetch_post_ids(session: requests.Session, tags: str,
     while True:
         if _cancelled(cancel, log):
             break
-        request_limit = min(limit, POSTS_PER_REQUEST) if limit else POSTS_PER_REQUEST
+        if page_size:
+            request_limit = page_size
+        else:
+            request_limit = min(limit, POSTS_PER_REQUEST) if limit else POSTS_PER_REQUEST
         params = {
             "tags": tags,
             "limit": request_limit,
@@ -231,7 +239,8 @@ def fetch_post_ids(session: requests.Session, tags: str,
                 break
             for post in posts:
                 all_ids.append(post["id"])
-            log(f"  第 {current_page} 页，获取到 {len(posts)} 个帖子（累计 {len(all_ids)}）")
+            log(i18n.t("core_page_fetched", page=current_page,
+                       n=len(posts), total=len(all_ids)))
 
             if page is not None:
                 break                      # 指定了页码，只取一页
@@ -240,15 +249,15 @@ def fetch_post_ids(session: requests.Session, tags: str,
             current_page += 1
             time.sleep(REQUEST_DELAY)
         except requests.exceptions.JSONDecodeError:
-            log(f"    响应不是 JSON，前200字节: {resp.content[:200]}")
+            log(i18n.t("core_bad_json", head=resp.content[:200]))
             break
         except requests.RequestException as e:
             consecutive_failures += 1
             if consecutive_failures >= MAX_PAGE_FAILURES:
-                log(f"获取帖子列表失败（第 {current_page} 页）: {e}")
-                log("连续失败次数过多，已中止。请检查网络/代理设置后重试。")
+                log(i18n.t("core_fetch_fail", page=current_page, err=e))
+                log(i18n.t("core_too_many_fails"))
                 break
-            log(f"获取帖子列表失败（第 {current_page} 页）: {e}，等待 5 秒后重试...")
+            log(i18n.t("core_fetch_fail_retry", page=current_page, err=e))
             time.sleep(5)
             continue
     return all_ids
@@ -300,16 +309,17 @@ def build_downloadable(session: requests.Session, post_ids: List[int],
         if _cancelled(cancel, log):
             break
         batch_ids = post_ids[i:i + POSTS_PER_REQUEST]
-        log(f"  获取批次 ({i + 1}-{min(i + POSTS_PER_REQUEST, total)}/{total})")
+        log(i18n.t("core_batch_fetching", a=i + 1,
+                   b=min(i + POSTS_PER_REQUEST, total), total=total))
         try:
             posts = fetch_posts_batch(session, batch_ids)
         except requests.RequestException:
-            log("  批次请求失败，等待 5 秒后重试...")
+            log(i18n.t("core_batch_fail"))
             time.sleep(5)
             try:
                 posts = fetch_posts_batch(session, batch_ids)
             except requests.RequestException as e2:
-                log(f"  重试仍失败: {e2}，跳过该批次")
+                log(i18n.t("core_batch_fail2", err=e2))
                 continue
 
         for post in posts:
@@ -321,8 +331,8 @@ def build_downloadable(session: requests.Session, post_ids: List[int],
                 failed_ids.append(pid)
         time.sleep(REQUEST_DELAY)
 
-    log(f"  可下载作品: {len(downloadable)}"
-        + (f"，无可用 URL: {len(failed_ids)}" if failed_ids else ""))
+    log(i18n.t("core_downloadable_count", n=len(downloadable))
+        + (i18n.t("core_no_url_suffix", n=len(failed_ids)) if failed_ids else ""))
     return downloadable, failed_ids
 
 
@@ -333,38 +343,42 @@ def build_downloadable(session: requests.Session, post_ids: List[int],
 def download_by_tags(session: requests.Session, tags: str,
                      output_dir: Optional[str] = None,
                      limit: Optional[int] = None, page: Optional[int] = None,
-                     workers: int = 1,
+                     page_size: Optional[int] = None, workers: int = 4,
                      log: LogFunc = print, cancel: CancelEvent = None) -> bool:
     """下载匹配标签的所有图片，按 1.jpg, 2.png ... 顺序编号。
 
     workers=1 时为顺序下载（等价原 e6_scraper.py）；
-    workers>1 时为并发下载（等价原 e6_taged_page_scraper.py，默认 2 线程）。
+    workers>1 时为并发下载（等价原 e6_taged_page_scraper.py）。
+    page_size 仅在指定 page 时生效：自定义每页帖子数（如 40/80/120/200/320）。
     """
     tags = (tags or "").strip()
     if not tags:
-        log("错误：标签不能为空。")
+        log(i18n.t("core_tags_empty"))
         return False
-    log(f"搜索标签: {tags}" + (f"（仅第 {page} 页）" if page else "")
-        + (f"（仅前 {limit} 个）" if limit else ""))
+    log(i18n.t("core_tags_label", tags=tags)
+        + (i18n.t("core_page_only", page=page) if page else "")
+        + (i18n.t("core_limit_only", n=limit) if limit else ""))
 
-    all_ids = fetch_post_ids(session, tags, limit=limit, page=page, log=log, cancel=cancel)
+    all_ids = fetch_post_ids(session, tags, limit=limit, page=page,
+                             page_size=(page_size if page else None),
+                             log=log, cancel=cancel)
     if not all_ids:
-        log("没有找到匹配的帖子。")
+        log(i18n.t("core_no_matches"))
         return False
-    log(f"共找到 {len(all_ids)} 个帖子")
+    log(i18n.t("core_found_posts", n=len(all_ids)))
 
     out = Path(output_dir) if output_dir else Path(sanitize_filename(tags.replace(" ", "_")))
     out.mkdir(parents=True, exist_ok=True)
 
     downloadable, failed_ids = build_downloadable(session, all_ids, log=log, cancel=cancel)
     if not downloadable:
-        log("没有可下载的图片。")
+        log(i18n.t("core_no_images"))
         return False
 
     existing_max = find_existing_max(out)
     start_index = existing_max + 1
     if existing_max > 0:
-        log(f"检测到已有 {existing_max} 个文件，从序号 {start_index} 继续下载")
+        log(i18n.t("core_resume_from", n=existing_max, m=start_index))
 
     downloaded = skipped = 0
     download_failed: List[int] = []
@@ -380,11 +394,12 @@ def download_by_tags(session: requests.Session, tags: str,
             target_index = start_index + (idx - existing_max)
             filepath = out / f"{target_index}.{ext}"
             if filepath.exists():
-                log(f"[{target_index}/{len(downloadable)}] #{pid} -> {filepath.name} 已存在，跳过")
+                log(i18n.t("core_task_exists", i=target_index,
+                           total=len(downloadable), pid=pid, name=filepath.name))
                 skipped += 1
                 continue
             tasks.append((pid, url, filepath, target_index))
-        log(f"待下载任务数: {len(tasks)}")
+        log(i18n.t("core_task_pending", n=len(tasks)))
 
         def dl_task(pid: int, url: str, filepath: Path, target_index: int):
             if _cancelled(cancel, log):
@@ -398,7 +413,7 @@ def download_by_tags(session: requests.Session, tags: str,
                 os.utime(filepath, None)
                 return "ok", pid, target_index
             except Exception as e:
-                log(f"  下载 #{pid} 失败: {e}")
+                log(i18n.t("core_dl_fail", pid=pid, err=e))
                 if filepath.exists():
                     try:
                         filepath.unlink()
@@ -413,7 +428,8 @@ def download_by_tags(session: requests.Session, tags: str,
                 status, pid, target_index = future.result()
                 if status == "ok":
                     downloaded += 1
-                    log(f"[{target_index}/{len(downloadable)}] 下载 #{pid} 完成")
+                    log(i18n.t("core_dl_done", i=target_index,
+                               total=len(downloadable), pid=pid))
                 elif status == "fail":
                     download_failed.append(pid)
     else:
@@ -427,10 +443,12 @@ def download_by_tags(session: requests.Session, tags: str,
             filename = f"{target_index}.{ext}"
             filepath = out / filename
             if filepath.exists():
-                log(f"[{target_index}/{len(downloadable)}] #{pid} -> {filename} 已存在，跳过")
+                log(i18n.t("core_task_exists", i=target_index,
+                           total=len(downloadable), pid=pid, name=filename))
                 skipped += 1
                 continue
-            log(f"[{target_index}/{len(downloadable)}] 下载 #{pid} -> {filename}")
+            log(i18n.t("core_dl_start", i=target_index, total=len(downloadable),
+                       pid=pid, name=filename))
             try:
                 with session.get(url, stream=True, timeout=60) as r:
                     r.raise_for_status()
@@ -440,7 +458,7 @@ def download_by_tags(session: requests.Session, tags: str,
                 os.utime(filepath, None)
                 downloaded += 1
             except requests.RequestException as e:
-                log(f"  下载失败: {e}")
+                log(i18n.t("core_dl_fail_seq", err=e))
                 download_failed.append(pid)
                 if filepath.exists():
                     try:
@@ -449,16 +467,18 @@ def download_by_tags(session: requests.Session, tags: str,
                         pass
             time.sleep(REQUEST_DELAY)
 
-    log("\n===== 下载完成 =====")
-    log(f"标签: {tags}")
-    log(f"总计帖子: {len(all_ids)}")
-    log(f"成功下载: {downloaded}")
-    log(f"已存在跳过: {skipped}")
+    log("\n" + i18n.t("core_done_header"))
+    log(i18n.t("core_tags_summary", tags=tags))
+    log(i18n.t("core_total_posts", n=len(all_ids)))
+    log(i18n.t("core_success", n=downloaded))
+    log(i18n.t("core_skipped", n=skipped))
     if download_failed:
-        log(f"下载失败: {len(download_failed)} (ID: {', '.join(map(str, download_failed))})")
+        log(i18n.t("core_failed_ids", n=len(download_failed),
+                   ids=", ".join(map(str, download_failed))))
     if failed_ids:
-        log(f"无可用 URL: {len(failed_ids)} (ID: {', '.join(map(str, failed_ids))})")
-    log(f"文件保存至: {out.resolve()}")
+        log(i18n.t("core_no_url_ids", n=len(failed_ids),
+                   ids=", ".join(map(str, failed_ids))))
+    log(i18n.t("core_saved_to", path=out.resolve()))
     return True
 
 
@@ -479,11 +499,11 @@ def download_posts_to_dir(session: requests.Session, post_ids: List[int],
         try:
             details.extend(fetch_posts_batch(session, batch))
         except Exception as e:
-            log(f"  批量获取帖子信息失败: {e}")
+            log(i18n.t("core_batch_info_fail", err=e))
         time.sleep(REQUEST_DELAY)
 
     if not details:
-        log("  没有找到帖子信息")
+        log(i18n.t("core_no_post_info"))
         return
 
     def dl_one(post: dict):
@@ -508,7 +528,7 @@ def download_posts_to_dir(session: requests.Session, post_ids: List[int],
             os.utime(filepath, None)
             return True, pid
         except Exception as e:
-            log(f"  下载帖子 #{pid} 失败: {e}")
+            log(i18n.t("core_post_dl_fail", pid=pid, err=e))
             if filepath.exists():
                 try:
                     filepath.unlink()
@@ -525,7 +545,7 @@ def download_posts_to_dir(session: requests.Session, post_ids: List[int],
                 success += 1
             else:
                 fail += 1
-    log(f"  下载完成：成功 {success}，失败/跳过 {fail}")
+    log(i18n.t("core_posts_dir_done", ok=success, fail=fail))
 
 
 def download_artist(session: requests.Session, artist_tag: str,
@@ -541,21 +561,21 @@ def download_artist(session: requests.Session, artist_tag: str,
     """
     artist_tag = (artist_tag or "").strip()
     if not artist_tag:
-        log("错误：艺术家标签不能为空。")
+        log(i18n.t("core_artist_empty"))
         return False
-    log(f"艺术家标签: {artist_tag}")
+    log(i18n.t("core_artist_label", tag=artist_tag))
 
     root_dir = Path(output_root) if output_root else Path(sanitize_filename(artist_tag))
     root_dir.mkdir(parents=True, exist_ok=True)
 
-    log("正在获取艺术家所有帖子 ID...")
+    log(i18n.t("core_fetching_artist"))
     all_ids = fetch_post_ids(session, artist_tag, log=log, cancel=cancel)
     if not all_ids:
-        log("没有找到任何帖子。")
+        log(i18n.t("core_artist_no_posts"))
         return False
-    log(f"共找到 {len(all_ids)} 个帖子")
+    log(i18n.t("core_found_posts", n=len(all_ids)))
 
-    log("正在获取帖子详细信息以提取 Pool 信息...")
+    log(i18n.t("core_fetching_details"))
     posts_with_pool_info: List[dict] = []
     for i in range(0, len(all_ids), POSTS_PER_REQUEST):
         if _cancelled(cancel, log):
@@ -564,7 +584,7 @@ def download_artist(session: requests.Session, artist_tag: str,
         try:
             posts_with_pool_info.extend(fetch_posts_batch(session, batch_ids))
         except Exception as e:
-            log(f"批量获取帖子信息失败: {e}")
+            log(i18n.t("core_info_fail", err=e))
         time.sleep(REQUEST_DELAY)
 
     pool_ids: set = set()
@@ -575,13 +595,14 @@ def download_artist(session: requests.Session, artist_tag: str,
             pool_ids.update(pools)
         else:
             posts_without_pool.append(post["id"])
-    log(f"发现 {len(pool_ids)} 个相关 Pool，{len(posts_without_pool)} 个帖子不属于任何池")
+    log(i18n.t("core_pool_info_summary", pools=len(pool_ids),
+               posts=len(posts_without_pool)))
 
     # 下载每个 Pool 的全部作品
     for pool_id in pool_ids:
         if _cancelled(cancel, log):
             break
-        log(f"\n正在处理 Pool ID: {pool_id}")
+        log("\n" + i18n.t("core_processing_pool", pid=pool_id))
         try:
             resp = session.get(f"{session.api_base}/pools/{pool_id}.json")
             resp.raise_for_status()
@@ -589,21 +610,21 @@ def download_artist(session: requests.Session, artist_tag: str,
             pool_info = data.get("pool", data)
             pool_name = sanitize_filename(pool_info.get("name", f"pool_{pool_id}"))
             pool_post_ids = pool_info.get("post_ids", [])
-            log(f"  Pool 名称: {pool_name}, 作品数: {len(pool_post_ids)}")
+            log(i18n.t("core_pool_name_count", name=pool_name, n=len(pool_post_ids)))
             download_posts_to_dir(session, pool_post_ids, root_dir / pool_name,
                                   log=log, cancel=cancel)
         except Exception as e:
-            log(f"  获取 Pool {pool_id} 失败: {e}")
+            log(i18n.t("core_pool_fetch_fail", pid=pool_id, err=e))
 
     # 下载不属于任何池的帖子
     if posts_without_pool and not skip_others:
-        log(f"\n下载 {len(posts_without_pool)} 个无 Pool 帖子到 others 文件夹")
+        log("\n" + i18n.t("core_downloading_others", n=len(posts_without_pool)))
         download_posts_to_dir(session, posts_without_pool, root_dir / "others",
                               log=log, cancel=cancel)
     elif skip_others:
-        log(f"\n已跳过 {len(posts_without_pool)} 个无 Pool 帖子（已勾选跳过）")
+        log("\n" + i18n.t("core_skipped_others", n=len(posts_without_pool)))
 
-    log("\n全部完成！文件保存在: " + str(root_dir.resolve()))
+    log("\n" + i18n.t("core_all_done", path=root_dir.resolve()))
     return True
 
 
@@ -613,60 +634,63 @@ def download_artist(session: requests.Session, artist_tag: str,
 
 def download_pool(session: requests.Session, pool_url: str,
                   output_dir: Optional[str] = None, reverse: bool = False,
+                  workers: int = 4,
                   log: LogFunc = print, cancel: CancelEvent = None) -> bool:
     """下载指定 Pool 中的所有图片，支持断点续传。
 
     reverse=False 时顺序编号（等价原 pool_scraper.py）；
     reverse=True  时反转编号，最后一张 -> 1.jpg（等价原 e621.py）。
+    workers>1 时并发下载图片（API 请求仍保持串行与间隔）。
     """
     pool_url = (pool_url or "").strip()
     try:
         pool_id = extract_pool_id(pool_url)
     except ValueError as e:
-        log(f"错误: {e}")
+        log(i18n.t("core_err", err=e))
         return False
-    log(f"解析到 Pool ID: {pool_id}")
+    log(i18n.t("core_pool_id", pid=pool_id))
 
-    log("正在获取 Pool 信息...")
+    log(i18n.t("core_fetching_pool"))
     try:
         resp = session.get(f"{session.api_base}/pools/{pool_id}.json")
         resp.raise_for_status()
         data = resp.json()
         pool_info = data.get("pool", data)
     except requests.RequestException as e:
-        log(f"获取 Pool 信息失败: {e}")
+        log(i18n.t("core_pool_fail", err=e))
         return False
 
     pool_name = pool_info.get("name", f"pool_{pool_id}")
     post_ids = pool_info.get("post_ids", [])
     if not post_ids:
-        log("该 Pool 中没有作品。")
+        log(i18n.t("core_pool_empty"))
         return False
-    log(f"Pool 名称: {pool_name}")
-    log(f"作品数量: {len(post_ids)}")
+    log(i18n.t("core_pool_name", name=pool_name))
+    log(i18n.t("core_post_count", n=len(post_ids)))
 
     out = Path(output_dir) if output_dir else Path(sanitize_filename(pool_name))
     out.mkdir(parents=True, exist_ok=True)
 
-    log("正在获取作品详细信息...")
+    log(i18n.t("core_fetching_details2"))
     downloadable, failed_ids = build_downloadable(session, post_ids, log=log, cancel=cancel)
     if not downloadable:
-        log("没有可下载的作品。")
+        log(i18n.t("core_no_downloadable"))
         return False
 
     existing_max = find_existing_max(out)
     start_index = existing_max + 1
     if existing_max > 0:
-        log(f"检测到已有 {existing_max} 个文件，从序号 {start_index} 开始续传"
-            + ("（反转顺序）" if reverse else ""))
+        log(i18n.t("core_resume_rev", n=existing_max, m=start_index,
+                   rev=(i18n.t("core_rev_suffix") if reverse else "")))
     elif reverse:
-        log("开始下载，图片将按 Pool 反转顺序编号：最后一张 -> 1.jpg, 倒数第二张 -> 2.png ...")
+        log(i18n.t("core_rev_start"))
 
     downloaded = skipped = 0
     download_failed: List[int] = []
+    tasks: List[Tuple[int, int, str, Path]] = []   # (target_index, pid, url, filepath)
 
     if reverse:
-        # ---------- 反转编号（原 e621.py 逻辑） ----------
+        # ---------- 反转编号：最后一张 -> 1.jpg ----------
         processed_count = 0
         for pid, url, ext in reversed(downloadable):
             if _cancelled(cancel, log):
@@ -675,72 +699,89 @@ def download_pool(session: requests.Session, pool_url: str,
                 processed_count += 1
                 continue
             target_index = start_index + (processed_count - existing_max)
-            filename = f"{target_index}.{ext}"
-            filepath = out / filename
+            filepath = out / f"{target_index}.{ext}"
             if filepath.exists():
-                log(f"[{target_index}/{len(downloadable)}] 作品 #{pid} -> {filename} 已存在，跳过")
+                log(i18n.t("core_post_exists", i=target_index,
+                           total=len(downloadable), pid=pid, name=filepath.name))
                 skipped += 1
                 processed_count += 1
                 continue
-            log(f"[{target_index}/{len(downloadable)}] 下载作品 #{pid} -> {filename}")
-            try:
-                with session.get(url, stream=True, timeout=60) as r:
-                    r.raise_for_status()
-                    with open(filepath, "wb") as f:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                os.utime(filepath, None)
-                downloaded += 1
-            except requests.RequestException as e:
-                log(f"  下载失败: {e}")
-                download_failed.append(pid)
-                if filepath.exists():
-                    try:
-                        filepath.unlink()
-                    except OSError:
-                        pass
+            tasks.append((target_index, pid, url, filepath))
             processed_count += 1
-            time.sleep(REQUEST_DELAY)
     else:
-        # ---------- 顺序编号（原 pool_scraper.py 逻辑） ----------
+        # ---------- 顺序编号：1.jpg, 2.png ... ----------
         for idx, (pid, url, ext) in enumerate(downloadable):
             if _cancelled(cancel, log):
                 break
-            target_index = start_index + idx
-            filename = f"{target_index}.{ext}"
-            filepath = out / filename
+            if idx < existing_max:                  # 续传跳过已完成作品
+                continue
+            target_index = start_index + (idx - existing_max)
+            filepath = out / f"{target_index}.{ext}"
             if filepath.exists():
-                log(f"[{target_index}/{start_index + len(downloadable) - 1}] 作品 #{pid} -> {filename} 已存在，跳过")
+                log(i18n.t("core_post_exists", i=target_index,
+                           total=len(downloadable), pid=pid, name=filepath.name))
                 skipped += 1
                 continue
-            log(f"[{target_index}] 下载作品 #{pid} -> {filename}")
-            try:
-                with session.get(url, stream=True, timeout=60) as r:
-                    r.raise_for_status()
-                    with open(filepath, "wb") as f:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                os.utime(filepath, None)
-                downloaded += 1
-            except requests.RequestException as e:
-                log(f"  下载失败: {e}")
-                download_failed.append(pid)
-                if filepath.exists():
-                    try:
-                        filepath.unlink()
-                    except OSError:
-                        pass
-            time.sleep(REQUEST_DELAY)
+            tasks.append((target_index, pid, url, filepath))
 
-    log("\n===== 下载完成 =====")
-    log(f"Pool: {pool_name} (ID: {pool_id})")
-    log(f"总计作品: {len(post_ids)}")
-    log(f"可下载作品: {len(downloadable)}")
-    log(f"成功下载: {downloaded}")
-    log(f"已存在跳过: {skipped}")
+    log(i18n.t("core_task_pending", n=len(tasks)))
+
+    def dl_task(target_index: int, pid: int, url: str, filepath: Path):
+        if _cancelled(cancel, log):
+            return "cancelled", pid, target_index
+        try:
+            with session.get(url, stream=True, timeout=60) as r:
+                r.raise_for_status()
+                with open(filepath, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            os.utime(filepath, None)
+            return "ok", pid, target_index
+        except Exception as e:
+            log(i18n.t("core_dl_fail", pid=pid, err=e))
+            if filepath.exists():
+                try:
+                    filepath.unlink()
+                except OSError:
+                    pass
+            return "fail", pid, target_index
+
+    if workers and workers > 1 and tasks:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(dl_task, i, p, u, fp): (p, u, fp, i)
+                       for i, p, u, fp in tasks}
+            for future in as_completed(futures):
+                status, pid, target_index = future.result()
+                if status == "ok":
+                    downloaded += 1
+                    log(i18n.t("core_dl_done", i=target_index,
+                               total=len(downloadable), pid=pid))
+                elif status == "fail":
+                    download_failed.append(pid)
+    else:
+        # 单线程（保留逐条日志）
+        for target_index, pid, url, filepath in tasks:
+            if _cancelled(cancel, log):
+                break
+            log(i18n.t("core_post_dl", i=target_index, total=len(downloadable),
+                       pid=pid, name=filepath.name))
+            status, pid2, _ = dl_task(target_index, pid, url, filepath)
+            if status == "ok":
+                downloaded += 1
+            elif status == "fail":
+                download_failed.append(pid2)
+
+    log("\n" + i18n.t("core_done_header"))
+    log(i18n.t("core_pool_summary", name=pool_name, pid=pool_id))
+    log(i18n.t("core_total_works", n=len(post_ids)))
+    log(i18n.t("core_downloadable", n=len(downloadable)))
+    log(i18n.t("core_success", n=downloaded))
+    log(i18n.t("core_skipped", n=skipped))
     if download_failed:
-        log(f"下载失败: {len(download_failed)} (ID: {', '.join(map(str, download_failed))})")
+        log(i18n.t("core_failed_ids", n=len(download_failed),
+                   ids=", ".join(map(str, download_failed))))
     if failed_ids:
-        log(f"无可用 URL: {len(failed_ids)} (ID: {', '.join(map(str, failed_ids))})")
-    log(f"文件保存至: {out.resolve()}")
+        log(i18n.t("core_no_url_ids", n=len(failed_ids),
+                   ids=", ".join(map(str, failed_ids))))
+    log(i18n.t("core_saved_to", path=out.resolve()))
     return True
