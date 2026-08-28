@@ -10,6 +10,7 @@ It bundles 5 common download modes into one window — **no command-line knowled
 - **Artist download** — downloads an artist's works, auto-grouped into folders by pool
 - **Pool download** — forward or reversed numbering
 - **Resume support** — interrupted downloads continue where they left off
+- **Concurrent downloads** — images download with 4 threads by default (API requests stay polite and spaced)
 - **Credential safety** — username & API key entered at every launch, never hardcoded; optional "remember" (plain text, stored locally)
 - **Proxy support** — auto-follows the Windows system proxy, or manual config
 - **Bilingual UI** — switch between 中文 / English anytime from the top-right corner
@@ -66,6 +67,7 @@ python app.py
 | ④ Pool 下载（顺序） | 下载整个 Pool，图片按顺序编号 |
 | ⑤ Pool 下载（反转） | 下载整个 Pool，图片反转编号（最后一张 → 1.jpg） |
 | ♻️ 断点续传 | 中断后再次运行，自动跳过已下载文件继续 |
+| ⚡ 并发下载 | 图片下载默认 4 线程并发（API 请求仍保持礼貌间隔） |
 | 🔑 凭据安全 | API 用户名 / Key 每次启动填写，不写入代码；可选"记住"（明文存本地） |
 | 🌐 代理支持 | 自动跟随系统代理，也支持手动配置 |
 | 🌍 中英双语 | 右上角一键切换 中文 / English 界面与日志 |
@@ -118,8 +120,8 @@ python app.py
 
 ### 各选项卡参数
 
-- **搜索标签**：支持 e621 搜索语法，例如 `aubrey_(iceink)` 或 `arcanis_(hahaluckyme) order:hot`；
-- **数量限制 / 页码**：留空表示不限制 / 下载全部页；
+- **搜索标签**：支持 e621 搜索语法，例如 `feline` 或 `feline,order:score`；
+- **数量限制 / 页码**：留空表示不限制 / 下载全部页；"标签分页下载"还可自选每页数量（40/80/120/200/320）；
 - **输出目录**：留空时自动以标签名或 Pool 名创建文件夹；
 - **艺术家分组下载**：可勾选"跳过非池作品"只下载属于 Pool 的图片。
 

@@ -124,6 +124,7 @@ class E621App:
         self.out1_var = tk.StringVar()
         self.page_tags_var = tk.StringVar()
         self.page_var = tk.StringVar()
+        self.page_size_var = tk.StringVar(value="320")
         self.out2_var = tk.StringVar()
         self.artist_var = tk.StringVar()
         self.out3_var = tk.StringVar()
@@ -247,6 +248,9 @@ class E621App:
         bind_enter(e2)
         ttk.Label(f2, text=self.t("page_label")).grid(row=1, column=0, sticky="e", pady=4)
         ttk.Entry(f2, textvariable=self.page_var, width=10).grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(f2, text=self.t("page_size_label")).grid(row=1, column=2, sticky="e", pady=4)
+        ttk.Combobox(f2, textvariable=self.page_size_var, width=7, state="readonly",
+                     values=["40", "80", "120", "200", "320"]).grid(row=1, column=3, sticky="w", pady=4)
         ttk.Label(f2, text=self.t("out_label")).grid(row=2, column=0, sticky="e", pady=4)
         ttk.Entry(f2, textvariable=self.out2_var, width=40).grid(row=2, column=1, columnspan=2, sticky="we", pady=4)
         ttk.Button(f2, text=self.t("browse"), command=lambda: self._pick_dir(self.out2_var)).grid(row=2, column=3, padx=4)
@@ -390,7 +394,8 @@ class E621App:
             limit = self._parse_int(self.limit_var.get(), self.t("field_limit"))
             out = self.out1_var.get().strip()
             return (core.download_by_tags,
-                    dict(tags=tags, output_dir=out or None, limit=limit, page=None, workers=1),
+                    dict(tags=tags, output_dir=out or None, limit=limit, page=None,
+                         workers=4),
                     out)
 
         if tab == 1:    # 标签分页下载
@@ -398,9 +403,14 @@ class E621App:
             if not tags:
                 raise ValueError(self.t("msg_need_tags"))
             page = self._parse_int(self.page_var.get(), self.t("field_page"))
+            try:
+                page_size = int(self.page_size_var.get())
+            except ValueError:
+                page_size = 320
             out = self.out2_var.get().strip()
             return (core.download_by_tags,
-                    dict(tags=tags, output_dir=out or None, limit=None, page=page, workers=2),
+                    dict(tags=tags, output_dir=out or None, limit=None, page=page,
+                         page_size=page_size, workers=4),
                     out)
 
         if tab == 2:    # 艺术家分组下载
@@ -418,14 +428,18 @@ class E621App:
             if not url or "/pools/" not in url:
                 raise ValueError(self.t("msg_need_pool"))
             out = self.out4_var.get().strip()
-            return (core.download_pool, dict(pool_url=url, output_dir=out or None, reverse=False), out)
+            return (core.download_pool,
+                    dict(pool_url=url, output_dir=out or None, reverse=False, workers=4),
+                    out)
 
         if tab == 4:    # Pool 反转
             url = self.pool2_var.get().strip()
             if not url or "/pools/" not in url:
                 raise ValueError(self.t("msg_need_pool"))
             out = self.out5_var.get().strip()
-            return (core.download_pool, dict(pool_url=url, output_dir=out or None, reverse=True), out)
+            return (core.download_pool,
+                    dict(pool_url=url, output_dir=out or None, reverse=True, workers=4),
+                    out)
 
         raise ValueError(self.t("msg_unknown_tab"))
 

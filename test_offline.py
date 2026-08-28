@@ -100,6 +100,39 @@ def main():
     print("[cancel       ]", names(out5))
     assert names(out5) == [], names(out5)
 
+    # 分页数量参数（page + page_size）
+    out6 = Path(tempfile.mkdtemp())
+    core.download_by_tags(s, "rating:s", output_dir=str(out6), page=1, page_size=40,
+                          workers=2, log=logs.append)
+    print("[page_size    ]", names(out6))
+    assert names(out6) == ["1.png", "2.jpg", "3.jpg"], names(out6)
+
+    # Pool 并发下载（workers=4）编号仍正确
+    out7 = Path(tempfile.mkdtemp())
+    core.download_pool(s, "https://e621.net/pools/12345", output_dir=str(out7),
+                       reverse=False, workers=4, log=logs.append)
+    print("[pool threaded]", names(out7))
+    assert names(out7) == ["1.png", "2.jpg", "3.jpg"], names(out7)
+
+    out8 = Path(tempfile.mkdtemp())
+    core.download_pool(s, "https://e621.net/pools/12345", output_dir=str(out8),
+                       reverse=True, workers=4, log=logs.append)
+    print("[pool rev thrd]", names(out8))
+    assert names(out8) == ["1.jpg", "2.jpg", "3.png"], names(out8)
+
+    # Pool 顺序模式断点续传：已有 2 个文件时只补剩余，不重复下载
+    out9 = Path(tempfile.mkdtemp())
+    core.download_pool(s, "https://e621.net/pools/12345", output_dir=str(out9),
+                       reverse=False, workers=4, log=logs.append)
+    (out9 / "1.png").write_bytes(b"x")
+    (out9 / "2.jpg").write_bytes(b"x")
+    n_before = len(names(out9))
+    core.download_pool(s, "https://e621.net/pools/12345", output_dir=str(out9),
+                       reverse=False, workers=4, log=logs.append)
+    print("[pool resume  ]", names(out9))
+    assert names(out9) == ["1.png", "2.jpg", "3.jpg"], names(out9)
+    assert len(names(out9)) == n_before, "断点续传不应新增重复文件"
+
     print("\nALL OFFLINE TESTS PASSED")
 
 
