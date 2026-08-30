@@ -42,13 +42,21 @@ python app.py
 
 ## Disclaimer
 
-- For personal study and lawful use only. **You are responsible for complying with the
-  e621 / e926 Terms of Service and API usage guidelines** (request rate, intended use, etc.).
+- This tool is intended **only for personal appreciation, translation and learning purposes**.
+  **Any commercial use or illegal profit-making with this tool is strictly prohibited.** Users are
+  solely responsible for how they use it.
+- **You are responsible for complying with the e621 / e926 Terms of Service and API usage
+  guidelines** (request rate, intended use, etc.).
 - ⚠️ **Avoid excessive usage**: frequent or massive API requests may lead to your account being
   rate-limited or **banned**. The tool enforces a 1-second delay between requests by default,
   but please download in batches for very large jobs and avoid running it continuously.
 - Use at your own risk. The author is not liable for downloaded content, account safety, or
   account bans caused by violating platform rules.
+
+## Support
+
+If this project helps you, a ⭐ **Star** on GitHub would mean a lot to me — it also helps others
+discover this tool. Thank you! 💛
 
 ---
 
