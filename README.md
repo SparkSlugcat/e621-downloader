@@ -1,7 +1,16 @@
 # E621 Downloader (GUI)
 
 A lightweight desktop downloader for [e621.net](https://e621.net) / e926, built with Python + tkinter.
-It bundles 5 common download modes into one window — **no command-line knowledge required**.
+It bundles 5 common download modes into one window — **no command-line knowledge required**
+(though you can still run it from the command line).
+
+## About
+
+- Downloads via the official **e621 JSON API** with **4 concurrent threads** by default — fast
+  and polite (API requests stay spaced).
+- Multiple download modes cover different needs: tags, pages, artists, pools (forward/reversed).
+- **Guest mode** works without an account, though some restricted content may require login.
+- AI-assisted development; normal use does **not** leak credentials or other private data.
 
 ## Features
 
@@ -17,16 +26,22 @@ It bundles 5 common download modes into one window — **no command-line knowled
 
 ## Requirements
 
-- Windows, Python 3.8+
-- `pip install requests`
+- Windows, Python 3.8+, `pip install requests` — **or just use the standalone exe (no Python needed)**
 
 ## Quick Start
 
-Double-click `启动.bat` (launches with `pythonw`, no console window), or run:
+Double-click `启动.bat` (launches with `pythonw`, no console window), run `python app.py`,
+**or download the standalone exe from Releases and run it directly** — no Python installation required.
 
 ```bat
 python app.py
 ```
+
+## Packaging (optional)
+
+Run `build_exe.bat` (auto-installs PyInstaller and builds), then use `dist\E621Downloader.exe` —
+**no Python needed**. Prebuilt exes are also published under the **Releases** page:
+repo page → Releases → pick a version → download the attachment.
 
 ## Getting an e621 API Key
 
@@ -58,19 +73,34 @@ python app.py
 If this project helps you, a ⭐ **Star** on GitHub would mean a lot to me — it also helps others
 discover this tool. Thank you! 💛
 
+## Related
+
+- [felinepaw](https://github.com/SparkSlugcat/felinepaw) — multi-site CLI downloader scripts
+  (e621 / yiffverse / e-hentai / FurAffinity) sharing the same engine concepts.
+
 ---
 
-# E621 下载器（GUI 版）
+# E621 下载器
 
 一个基于 Python tkinter 的 **e621 / e926 图片下载图形界面工具**，把 5 种常用的下载方式
-集成到一个窗口里，**无需记忆任何命令行参数**。
+集成到一个窗口里，**无需记忆任何命令行参数**（尽管你仍可以通过命令行的形式运行它们）。
+
+## **简要说明**
+
+该下载器的下载原理是通过API接口获取json文件，且默认4线程，下载速度较快。
+
+配备了多种下载功能，精确服务下载需求。
+
+如果您不愿意注册和使用API，您也可以以游客身份访问，尽管这可能会影响到部分限制级作品的下载。
+
+脚本的编写由AI辅助，正常使用不会泄露账密等隐私信息。
 
 ## ✨ 功能特性
 
 | 功能 | 说明 |
 |---|---|
 | ① 标签下载 | 按标签下载全部图片，顺序编号 `1.jpg, 2.png ...`，可限制数量 |
-| ② 标签分页下载 | 按标签下载，可指定只下某一页（每页最多 320 张） |
+| ② 标签分页下载 | 按标签下载，可指定只下某一页 |
 | ③ 艺术家分组下载 | 下载某艺术家全部作品，按所属 Pool 分文件夹，非池作品存 `others` |
 | ④ Pool 下载（顺序） | 下载整个 Pool，图片按顺序编号 |
 | ⑤ Pool 下载（反转） | 下载整个 Pool，图片反转编号（最后一张 → 1.jpg） |
@@ -84,6 +114,7 @@ discover this tool. Thank you! 💛
 
 - Windows（启动脚本为批处理），Python 3.8+
 - 依赖：`requests`（`pip install requests`）
+- 如果直接使用exe，则无需python环境
 
 ## 运行方式
 
@@ -96,6 +127,8 @@ python app.py
 ```
 
 > 如果双击后没有反应，在命令行运行 `python app.py` 查看具体报错信息。
+
+**方式三**：下载exe文件，直接使用。
 
 ## 使用说明
 
@@ -138,8 +171,7 @@ python app.py
 双击 `build_exe.bat`（自动安装 PyInstaller 并打包），完成后双击
 `dist\E621Downloader.exe` 即可，**无需安装 Python**。
 
-> 已打包的 exe 不会提交到仓库（见 `.gitignore`），而是发布在仓库的
-> **Releases** 页面供直接下载：仓库页 → Releases → 选择一个版本 → 下载附件。
+**Releases** 页面可供直接下载：仓库页 → Releases → 选择一个版本 → 下载附件。
 
 ## 文件结构
 
@@ -157,16 +189,18 @@ python app.py
 
 ## 安全提示
 
-- 本程序**不会**把用户名 / API Key 写进代码；只有勾选"记住"时才会明文保存在
-  `%APPDATA%\E621Downloader\config.json`，**切勿把该文件提交到仓库**；
 - 请勿提交任何真实的 e621 用户名或 API Key 到 GitHub；如有泄露，请在 e621
   账户设置的 **API Access** 页面重新生成。
 
 ## 免责声明
 
-- 本工具仅供个人学习与合法用途，**请自行遵守 e621 / e926 的服务条款（Terms of Service）与 API 使用规范**（请求频率、用途等）；
+- 本工具仅供个人学习与合法用途（如艺术欣赏和翻译），**请自行遵守 e621 / e926 的服务条款（Terms of Service）与 API 使用规范**（请求频率、用途等）；
 - ⚠️ **请勿高频使用**：频繁、大量的 API 请求可能导致你的 e621 账号被**限流甚至封禁**。本工具默认已内置 1 秒请求间隔，但大批量下载时仍建议分批进行，切勿长时间连续运行；
 - 使用者需自行承担使用本工具产生的任何后果；作者不对下载内容、账号安全及因违反平台规则导致的封禁负责。
+
+## 支持
+
+如果这个工具帮到了你，麻烦留下评论或者一颗star，这对我真的很重要，谢谢！
 
 ## 许可证
 
