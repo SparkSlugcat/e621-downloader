@@ -202,6 +202,10 @@ python app.py
 
 如果这个工具帮到了你，麻烦留下评论或者一颗star，这对我真的很重要，谢谢！
 
+## 关联
+
+我的另一个仓库[felinepaw](https://github.com/SparkSlugcat/felinepaw)包含了e621-downloader的功能，但面向更多网站，目前仍在更新中。
+
 ## 许可证
 
 [MIT License](LICENSE)
