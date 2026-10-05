@@ -32,6 +32,7 @@ import i18n
 # ---------- 默认配置 ----------
 POSTS_PER_REQUEST = 320          # API 单次最多帖子数
 REQUEST_DELAY = 1.0              # API 请求间隔（秒）
+REQUEST_TIMEOUT = 30             # API 请求超时（秒）；不设则网络抖动会导致永久挂起
 MAX_RETRIES = 3
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -230,7 +231,8 @@ def fetch_post_ids(session: requests.Session, tags: str,
             "filter_id": 0,          # 关闭内容过滤器，与网页端一致
         }
         try:
-            resp = session.get(f"{session.api_base}/posts.json", params=params)
+            resp = session.get(f"{session.api_base}/posts.json", params=params,
+                               timeout=REQUEST_TIMEOUT)
             resp.raise_for_status()
             data = resp.json()
             posts = data.get("posts", [])
@@ -272,7 +274,8 @@ def fetch_posts_batch(session: requests.Session, post_ids: List[int]) -> List[di
         "tags": f"id:{ids_str}",
         "limit": POSTS_PER_REQUEST,
     }
-    resp = session.get(f"{session.api_base}/posts.json", params=params)
+    resp = session.get(f"{session.api_base}/posts.json", params=params,
+                       timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     data = resp.json()
     return data.get("posts", [])
