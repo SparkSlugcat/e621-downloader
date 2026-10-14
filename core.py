@@ -551,6 +551,145 @@ def download_posts_to_dir(session: requests.Session, post_ids: List[int],
     log(i18n.t("core_posts_dir_done", ok=success, fail=fail))
 
 
+def scan_artist(session: requests.Session, artist_tag: str,
+                log: LogFunc = print, cancel: CancelEvent = None) -> Optional[List[dict]]:
+    """扫描艺术家的作品并按 Pool 分组，返回**有序**的任务项列表（不下载图片）。
+
+    返回 items 列表，每项是一个 dict：
+        {"kind": "pool"|"others", "pool_id": int|None, "name": str,
+         "dir": str, "count": int, "post_ids": list|None, "dup": bool}
+      - pool 项 post_ids 为 None（下载时现拉，避免清单过大或过期）
+      - others 项自带 post_ids（下载时直接用）
+      - dir 是**落盘用的文件夹名**（同名 Pool 已加 _<id> 消歧）
+
+    顺序固定：Pool 按 (名称, pool_id) 排序，others 永远最后。
+    ⚠️ 顺序必须稳定，否则"扫描时看到的第 2 项"和"下载时的第 2 项"会不是同一个池。
+
+    出错（标签为空 / 被取消）时返回 None；搜不到作品返回空列表 []。
+    """
+    artist_tag = (artist_tag or "").strip()
+    if not artist_tag:
+        log(i18n.t("core_artist_empty"))
+        return None
+    log(i18n.t("core_artist_label", tag=artist_tag))
+
+    log(i18n.t("core_fetching_artist"))
+    all_ids = fetch_post_ids(session, artist_tag, log=log, cancel=cancel)
+    if not all_ids:
+        log(i18n.t("core_artist_no_posts"))
+        return []
+    log(i18n.t("core_found_posts", n=len(all_ids)))
+
+    log(i18n.t("core_fetching_details"))
+    posts: List[dict] = []
+    for i in range(0, len(all_ids), POSTS_PER_REQUEST):
+        if _cancelled(cancel, log):
+            return None
+        batch_ids = all_ids[i:i + POSTS_PER_REQUEST]
+        try:
+            posts.extend(fetch_posts_batch(session, batch_ids))
+        except Exception as e:
+            log(i18n.t("core_info_fail", err=e))
+        time.sleep(REQUEST_DELAY)
+
+    pool_ids: set = set()
+    others_ids: List[int] = []
+    for post in posts:
+        pools = post.get("pools") or []
+        if pools:
+            pool_ids.update(pools)
+        else:
+            others_ids.append(post["id"])
+    log(i18n.t("core_pool_info_summary", pools=len(pool_ids), posts=len(others_ids)))
+
+    # 拉每个 Pool 的名称与作品数（名单要显示，排序也要名字）
+    pool_items: List[dict] = []
+    for pid in sorted(pool_ids):
+        if _cancelled(cancel, log):
+            return None
+        try:
+            resp = session.get(f"{session.api_base}/pools/{pid}.json", timeout=REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            info = resp.json()
+            info = info.get("pool", info)
+            name = info.get("name") or f"pool_{pid}"
+            count = len(info.get("post_ids") or [])
+            pool_items.append({"kind": "pool", "pool_id": pid, "name": name,
+                               "count": count, "post_ids": None})
+        except Exception as e:
+            log(i18n.t("core_pool_fetch_fail", pid=pid, err=e))
+        time.sleep(REQUEST_DELAY)
+
+    pool_items.sort(key=lambda x: (x["name"].lower(), x["pool_id"]))
+
+    # 目录名消歧：同名 Pool 追加 _<pool_id>，否则两个同名池会下进同一个文件夹。
+    # 判重基于 sanitize 之后的名字（不同原名也可能 sanitize 成同一个）。
+    base_dirs = [sanitize_filename(it["name"]) for it in pool_items]
+    dup_count: dict = {}
+    for d in base_dirs:
+        dup_count[d] = dup_count.get(d, 0) + 1
+    for it, d in zip(pool_items, base_dirs):
+        is_dup = dup_count[d] > 1
+        it["dup"] = is_dup
+        it["dir"] = f"{d}_{it['pool_id']}" if is_dup else d
+
+    items: List[dict] = list(pool_items)
+    if others_ids:
+        items.append({"kind": "others", "pool_id": None, "name": "others",
+                      "dir": "others", "count": len(others_ids),
+                      "post_ids": others_ids, "dup": False})
+    return items
+
+
+def download_artist_items(session: requests.Session, items: List[dict],
+                          output_root: Optional[str] = None, skip_others: bool = False,
+                          log: LogFunc = print, cancel: CancelEvent = None) -> bool:
+    """按给定的 items 列表下载（通常来自 scan_artist，或用户勾选后的子集）。
+
+    - pool 项：现拉该 Pool 的 post_ids 再下载
+    - others 项：直接用 items 里自带的 post_ids
+    - skip_others=True 时跳过 others 项（GUI"开始下载"用；勾选下载时由调用方过滤，不传此参数）
+    """
+    if not items:
+        log(i18n.t("core_artist_no_posts"))
+        return False
+
+    root_dir = Path(output_root) if output_root else Path("artist")
+    root_dir.mkdir(parents=True, exist_ok=True)
+
+    for it in items:
+        if _cancelled(cancel, log):
+            break
+        if it["kind"] == "pool":
+            pid = it.get("pool_id")
+            log(i18n.t("core_processing_pool", pid=pid))
+            log(i18n.t("core_pool_name_count", name=it["name"], n=it.get("count", 0)))
+            try:
+                resp = session.get(f"{session.api_base}/pools/{pid}.json", timeout=REQUEST_TIMEOUT)
+                resp.raise_for_status()
+                info = resp.json()
+                info = info.get("pool", info)
+                post_ids = info.get("post_ids") or []
+            except Exception as e:
+                log(i18n.t("core_pool_fetch_fail", pid=pid, err=e))
+                continue
+            sub = it.get("dir") or sanitize_filename(it["name"])
+        else:
+            if skip_others:
+                log(i18n.t("core_skipped_others", n=it.get("count", 0)))
+                continue
+            log(i18n.t("core_downloading_others", n=it.get("count", 0)))
+            post_ids = it.get("post_ids") or []
+            sub = it.get("dir") or "others"
+
+        if not post_ids:
+            continue
+        download_posts_to_dir(session, post_ids, root_dir / sub, log=log, cancel=cancel)
+
+    log("\n" + i18n.t("core_all_done", path=root_dir.resolve()))
+    return True
+
+
 def download_artist(session: requests.Session, artist_tag: str,
                     output_root: Optional[str] = None, skip_others: bool = False,
                     log: LogFunc = print, cancel: CancelEvent = None) -> bool:
@@ -561,74 +700,16 @@ def download_artist(session: requests.Session, artist_tag: str,
             Pool名称1/...      （每个 Pool 单独文件夹，完整下载池内全部作品）
             Pool名称2/...
             others/...        （不属于任何 Pool 的作品；skip_others=True 时跳过）
+
+    实现上就是 scan_artist() 取全部名单 + download_artist_items() 逐一下载，
+    这样"全量下载"和"扫描后勾选下载"走的是同一套排序/目录规则，结果一致。
     """
-    artist_tag = (artist_tag or "").strip()
-    if not artist_tag:
-        log(i18n.t("core_artist_empty"))
+    items = scan_artist(session, artist_tag, log=log, cancel=cancel)
+    if not items:                     # None（出错）或 []（无作品）
         return False
-    log(i18n.t("core_artist_label", tag=artist_tag))
-
-    root_dir = Path(output_root) if output_root else Path(sanitize_filename(artist_tag))
-    root_dir.mkdir(parents=True, exist_ok=True)
-
-    log(i18n.t("core_fetching_artist"))
-    all_ids = fetch_post_ids(session, artist_tag, log=log, cancel=cancel)
-    if not all_ids:
-        log(i18n.t("core_artist_no_posts"))
-        return False
-    log(i18n.t("core_found_posts", n=len(all_ids)))
-
-    log(i18n.t("core_fetching_details"))
-    posts_with_pool_info: List[dict] = []
-    for i in range(0, len(all_ids), POSTS_PER_REQUEST):
-        if _cancelled(cancel, log):
-            break
-        batch_ids = all_ids[i:i + POSTS_PER_REQUEST]
-        try:
-            posts_with_pool_info.extend(fetch_posts_batch(session, batch_ids))
-        except Exception as e:
-            log(i18n.t("core_info_fail", err=e))
-        time.sleep(REQUEST_DELAY)
-
-    pool_ids: set = set()
-    posts_without_pool: List[int] = []
-    for post in posts_with_pool_info:
-        pools = post.get("pools") or []
-        if pools:
-            pool_ids.update(pools)
-        else:
-            posts_without_pool.append(post["id"])
-    log(i18n.t("core_pool_info_summary", pools=len(pool_ids),
-               posts=len(posts_without_pool)))
-
-    # 下载每个 Pool 的全部作品
-    for pool_id in pool_ids:
-        if _cancelled(cancel, log):
-            break
-        log("\n" + i18n.t("core_processing_pool", pid=pool_id))
-        try:
-            resp = session.get(f"{session.api_base}/pools/{pool_id}.json")
-            resp.raise_for_status()
-            data = resp.json()
-            pool_info = data.get("pool", data)
-            pool_name = sanitize_filename(pool_info.get("name", f"pool_{pool_id}"))
-            pool_post_ids = pool_info.get("post_ids", [])
-            log(i18n.t("core_pool_name_count", name=pool_name, n=len(pool_post_ids)))
-            download_posts_to_dir(session, pool_post_ids, root_dir / pool_name,
-                                  log=log, cancel=cancel)
-        except Exception as e:
-            log(i18n.t("core_pool_fetch_fail", pid=pool_id, err=e))
-
-    # 下载不属于任何池的帖子
-    if posts_without_pool and not skip_others:
-        log("\n" + i18n.t("core_downloading_others", n=len(posts_without_pool)))
-        download_posts_to_dir(session, posts_without_pool, root_dir / "others",
-                              log=log, cancel=cancel)
-    elif skip_others:
-        log("\n" + i18n.t("core_skipped_others", n=len(posts_without_pool)))
-
-    log("\n" + i18n.t("core_all_done", path=root_dir.resolve()))
-    return True
+    root = output_root or sanitize_filename(artist_tag)
+    return download_artist_items(session, items, output_root=root,
+                                 skip_others=skip_others, log=log, cancel=cancel)
 
 
 # ============================================================

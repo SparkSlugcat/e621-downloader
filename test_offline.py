@@ -59,6 +59,29 @@ def names(d):
     return sorted(f.name for f in Path(d).iterdir() if f.is_file())
 
 
+class FakeMultiPoolSession(FakeSession):
+    """两个**同名** Pool（id 11 / 12）+ 一个 others，用于验证名单排序与目录消歧。"""
+
+    def __init__(self):
+        super().__init__()
+        self.posts = [
+            {"id": 2001, "file": {"url": "https://cdn/2001.png", "ext": "png"}, "pools": [11]},
+            {"id": 2002, "file": {"url": "https://cdn/2002.png", "ext": "png"}, "pools": [12]},
+            {"id": 2003, "file": {"url": "https://cdn/2003.png", "ext": "png"}, "pools": [11]},
+            {"id": 2004, "file": {"url": "https://cdn/2004.png", "ext": "png"}},
+        ]
+        self.pools = {
+            11: {"pool": {"id": 11, "name": "Same", "post_ids": [2001, 2003]}},
+            12: {"pool": {"id": 12, "name": "Same", "post_ids": [2002]}},
+        }
+
+    def get(self, url, params=None, stream=False, timeout=None):
+        if "pools/" in url:
+            pid = int(url.rstrip("/").split("/")[-1].replace(".json", ""))
+            return FakeResp(self.pools[pid])
+        return super().get(url, params=params, stream=stream, timeout=timeout)
+
+
 def main():
     s = FakeSession()
     logs = []
@@ -132,6 +155,33 @@ def main():
     print("[pool resume  ]", names(out9))
     assert names(out9) == ["1.png", "2.jpg", "3.jpg"], names(out9)
     assert len(names(out9)) == n_before, "断点续传不应新增重复文件"
+
+    # ---- 艺术家：扫描名单（有序 + 同名 Pool 消歧）----
+    s2 = FakeMultiPoolSession()
+    items = core.scan_artist(s2, "multi_artist", log=logs.append)
+    dirs = [it["dir"] for it in items]
+    print("[scan items   ]", [(it["kind"], it["name"], it["dir"], it["count"]) for it in items])
+    assert dirs == ["Same_11", "Same_12", "others"], dirs
+    assert len(set(dirs)) == len(dirs), "同名 Pool 的目录必须两两不同"
+
+    # ---- 只下载勾选的项（第 1 个同名 Pool + others，跳过第 2 个）----
+    out10 = Path(tempfile.mkdtemp())
+    core.download_artist_items(s2, [items[0], items[2]], output_root=str(out10), log=logs.append)
+    files = sorted(str(Path(p).relative_to(out10)).replace("\\", "/")
+                   for p in Path(out10).rglob("*") if p.is_file())
+    print("[selected     ]", files)
+    assert "Same_11/2001.png" in files and "Same_11/2003.png" in files, files
+    assert "others/2004.png" in files, files
+    assert not any(f.startswith("Same_12") for f in files), files
+
+    # ---- 全量下载（download_artist）与扫描走同一套目录规则 ----
+    out11 = Path(tempfile.mkdtemp())
+    core.download_artist(s2, "multi_artist", output_root=str(out11), log=logs.append)
+    files11 = sorted(str(Path(p).relative_to(out11)).replace("\\", "/")
+                     for p in Path(out11).rglob("*") if p.is_file())
+    print("[artist full  ]", files11)
+    assert {"Same_11/2001.png", "Same_11/2003.png", "Same_12/2002.png",
+            "others/2004.png"} <= set(files11), files11
 
     print("\nALL OFFLINE TESTS PASSED")
 

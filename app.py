@@ -36,6 +36,11 @@ except Exception:
 SITES = ["https://e621.net", "https://e926.net"]
 PROXY_KEYS = ("auto", "off", "custom")
 
+# 名单表格里的勾选标记（点击第一列切换）。Treeview 没有原生复选框，
+# 用这两个字符来表示"已勾选 / 未勾选"。
+CHECKED = "☑"
+UNCHECKED = "☐"
+
 
 class E621App:
     def __init__(self, root: tk.Tk):
@@ -129,6 +134,11 @@ class E621App:
         self.artist_var = tk.StringVar()
         self.out3_var = tk.StringVar()
         self.skip_others_var = tk.BooleanVar(value=False)
+        # 艺术家名单（扫描结果）与勾选状态。存成数据而不是只放在 Treeview 里，
+        # 这样切换界面语言、重建界面后名单和勾选都不会丢。
+        self.artist_items = []
+        self.artist_checked = set()
+        self.select_all_var = tk.BooleanVar(value=True)
         self.pool1_var = tk.StringVar()
         self.out4_var = tk.StringVar()
         self.pool2_var = tk.StringVar()
@@ -171,6 +181,11 @@ class E621App:
             self.status_var.set(self.t("status_idle"))
         self.start_btn.config(state="disabled" if running else "normal")
         self.stop_btn.config(state="normal" if running else "disabled")
+        if hasattr(self, "scan_btn"):
+            self.scan_btn.config(state="disabled" if running else "normal")
+        # 切换界面语言会重建整个界面；名单数据在 self.artist_items 里，重新填进表格
+        if self.artist_items:
+            self._fill_artist_tree()
         self._on_proxy_mode()
 
     def _build_auth_bar(self):
@@ -257,7 +272,7 @@ class E621App:
         ttk.Label(f2, text=self.t("hint_page"), foreground="gray").grid(row=3, column=1, columnspan=3, sticky="w")
         f2.columnconfigure(2, weight=1)
 
-        # ---- Tab 3：艺术家分组下载 ----
+        # ---- Tab 3：艺术家分组下载（扫描名单 → 勾选 → 下载选中）----
         f3 = ttk.Frame(self.notebook, padding=8)
         self.notebook.add(f3, text=self.t("tab_artist"))
         ttk.Label(f3, text=self.t("artist_label")).grid(row=0, column=0, sticky="e", pady=4)
@@ -269,8 +284,37 @@ class E621App:
         ttk.Button(f3, text=self.t("browse"), command=lambda: self._pick_dir(self.out3_var)).grid(row=1, column=3, padx=4)
         ttk.Checkbutton(f3, text=self.t("skip_others"), variable=self.skip_others_var
                         ).grid(row=2, column=1, columnspan=3, sticky="w", pady=4)
-        ttk.Label(f3, text=self.t("hint_artist"), foreground="gray").grid(row=3, column=1, columnspan=3, sticky="w")
+
+        # 扫描 / 下载选中 / 全选
+        bar3 = ttk.Frame(f3)
+        bar3.grid(row=3, column=0, columnspan=4, sticky="w", pady=(6, 2))
+        self.scan_btn = ttk.Button(bar3, text=self.t("btn_scan"), command=self._scan_artist)
+        self.scan_btn.pack(side="left")
+        ttk.Button(bar3, text=self.t("btn_download_selected"),
+                   command=self._download_selected).pack(side="left", padx=6)
+        ttk.Checkbutton(bar3, text=self.t("btn_select_all"), variable=self.select_all_var,
+                        command=self._toggle_select_all).pack(side="left", padx=6)
+
+        # 名单表格（点第一列切换勾选）
+        tf = ttk.Frame(f3)
+        tf.grid(row=4, column=0, columnspan=4, sticky="nsew", pady=(2, 0))
+        self.artist_tree = ttk.Treeview(tf, columns=("sel", "name", "count"),
+                                        show="headings", height=6, selectmode="none")
+        self.artist_tree.heading("sel", text=self.t("col_sel"))
+        self.artist_tree.heading("name", text=self.t("col_name"))
+        self.artist_tree.heading("count", text=self.t("col_count"))
+        self.artist_tree.column("sel", width=44, anchor="center", stretch=False)
+        self.artist_tree.column("name", width=430, anchor="w")
+        self.artist_tree.column("count", width=80, anchor="e", stretch=False)
+        vsb3 = ttk.Scrollbar(tf, orient="vertical", command=self.artist_tree.yview)
+        self.artist_tree.configure(yscrollcommand=vsb3.set)
+        self.artist_tree.pack(side="left", fill="both", expand=True)
+        vsb3.pack(side="right", fill="y")
+        self.artist_tree.bind("<Button-1>", self._on_tree_click)
+        ttk.Label(f3, text=self.t("hint_artist"), foreground="gray"
+                  ).grid(row=5, column=0, columnspan=4, sticky="w", pady=(4, 0))
         f3.columnconfigure(2, weight=1)
+        f3.rowconfigure(4, weight=1)
 
         # ---- Tab 4：Pool 下载（顺序编号）----
         f4 = ttk.Frame(self.notebook, padding=8)
@@ -343,6 +387,104 @@ class E621App:
             var.set(d)
 
     # ------------------------------------------------------------
+    # 艺术家名单：扫描 / 勾选 / 下载选中
+    # ------------------------------------------------------------
+    def _scan_artist(self):
+        """扫描艺术家的全部 Pool（不下载图片），结果填进名单表格。"""
+        if self.worker and self.worker.is_alive():
+            messagebox.showinfo(self.t("app_title"), self.t("msg_running"))
+            return
+        artist = self.artist_var.get().strip()
+        if not artist:
+            messagebox.showwarning(self.t("msg_param_error"), self.t("msg_need_artist"))
+            return
+        self.artist_items = []
+        self.artist_checked = set()
+        self._fill_artist_tree()
+        self.current_task = {"mode": "scan", "fn": core.scan_artist,
+                             "kwargs": dict(artist_tag=artist), "out_dir": ""}
+        self._launch()
+
+    def _download_selected(self):
+        """只下载名单里勾选的项（Pool 现拉作品列表；others 用扫描时记下的）。"""
+        if self.worker and self.worker.is_alive():
+            messagebox.showinfo(self.t("app_title"), self.t("msg_running"))
+            return
+        if not self.artist_items:
+            messagebox.showinfo(self.t("app_title"), self.t("msg_need_scan"))
+            return
+        picked = [self.artist_items[i] for i in sorted(self.artist_checked)
+                  if 0 <= i < len(self.artist_items)]
+        if not picked:
+            messagebox.showwarning(self.t("msg_param_error"), self.t("msg_no_selection"))
+            return
+        out = self.out3_var.get().strip() or core.sanitize_filename(self.artist_var.get().strip())
+        # 勾选是显式选择：即使勾了「跳过非池作品」，也以下载所勾选的项为准
+        self.current_task = {"mode": "download", "fn": core.download_artist_items,
+                             "kwargs": dict(items=picked, output_root=out, skip_others=False),
+                             "out_dir": out}
+        self._launch()
+
+    def _fill_artist_tree(self):
+        """把 self.artist_items 填进名单表格；勾选状态取自 self.artist_checked。"""
+        tree = getattr(self, "artist_tree", None)
+        if tree is None:
+            return
+        for iid in tree.get_children():
+            tree.delete(iid)
+        if not self.artist_items:
+            self.select_all_var.set(False)
+            return
+        for idx, it in enumerate(self.artist_items):
+            if it["kind"] == "others":
+                name = self.t("others_name")
+            else:
+                name = it["name"]
+                if it.get("dup"):
+                    # 同名 Pool：标出 id 以便区分（它们的目录名也带了 id）
+                    name = f"{name}  [pool id {it['pool_id']}]"
+            mark = CHECKED if idx in self.artist_checked else UNCHECKED
+            tree.insert("", "end", iid=str(idx), values=(mark, name, it.get("count", 0)))
+        self._sync_select_all()
+
+    def _on_tree_click(self, event):
+        """点击第一列 = 切换该行的勾选。"""
+        tree = self.artist_tree
+        if tree.identify_region(event.x, event.y) != "cell":
+            return
+        if tree.identify_column(event.x) != "#1":
+            return
+        iid = tree.identify_row(event.y)
+        if not iid:
+            return
+        idx = int(iid)
+        if idx in self.artist_checked:
+            self.artist_checked.discard(idx)
+        else:
+            self.artist_checked.add(idx)
+        tree.set(iid, "sel", CHECKED if idx in self.artist_checked else UNCHECKED)
+        self._sync_select_all()
+
+    def _toggle_select_all(self):
+        if self.select_all_var.get():
+            self.artist_checked = set(range(len(self.artist_items)))
+        else:
+            self.artist_checked = set()
+        self._fill_artist_tree()
+
+    def _sync_select_all(self):
+        n = len(self.artist_items)
+        self.select_all_var.set(bool(n) and len(self.artist_checked) == n)
+
+    def _on_scan_items(self, items):
+        """扫描结果回到主线程：默认全部勾选，写进表格。"""
+        self.artist_items = list(items or [])
+        self.artist_checked = set(range(len(self.artist_items)))
+        self._fill_artist_tree()
+        if self.artist_items:
+            self.log(self.t("msg_scan_done", n=len(self.artist_items)))
+
+    # ------------------------------------------------------------
     # 任务控制
     # ------------------------------------------------------------
     def log(self, msg: str):
@@ -358,6 +500,8 @@ class E621App:
                     self.log_text.insert("end", payload + "\n")
                     self.log_text.see("end")
                     self.log_text.configure(state="disabled")
+                elif kind == "items":
+                    self._on_scan_items(payload)
                 elif kind == "done":
                     self._on_done()
         except queue.Empty:
@@ -365,6 +509,7 @@ class E621App:
         self.root.after(100, self._poll_queue)
 
     def _start(self):
+        """「开始下载」：按当前选项卡全量下载（艺术家页 = 全部 Pool + others）。"""
         if self.worker and self.worker.is_alive():
             messagebox.showinfo(self.t("app_title"), self.t("msg_running"))
             return
@@ -376,10 +521,16 @@ class E621App:
             messagebox.showwarning(self.t("msg_param_error"), str(e))
             return
 
-        self.current_task = (fn, kwargs)
+        self.current_task = {"mode": "download", "fn": fn, "kwargs": kwargs, "out_dir": out_dir}
+        self._launch()
+
+    def _launch(self):
+        """把 self.current_task 交给工作线程（扫描 / 下载共用）。"""
         self.cancel_event.clear()
         self.worker = threading.Thread(target=self._worker, daemon=True)
         self.start_btn.config(state="disabled")
+        if hasattr(self, "scan_btn"):
+            self.scan_btn.config(state="disabled")
         self.stop_btn.config(state="normal")
         self.status_var.set(self.t("status_running"))
         self.worker.start()
@@ -480,11 +631,19 @@ class E621App:
             else:
                 self.log(self.t("msg_guest", site=base))
 
-            fn, kwargs = self.current_task
+            task = self.current_task or {}
+            fn = task.get("fn")
+            kwargs = dict(task.get("kwargs") or {})
             self.log("=" * 40)
             self.log(self.t("msg_task_start", name=getattr(fn, "__name__", str(fn))))
             try:
-                fn(session, log=self.log, cancel=self.cancel_event, **kwargs)
+                if task.get("mode") == "scan":
+                    # 扫描只取名单（不下载），结果通过队列交回主线程填表格
+                    items = fn(session, log=self.log, cancel=self.cancel_event, **kwargs)
+                    if items is not None:
+                        self.msg_queue.put(("items", items))
+                else:
+                    fn(session, log=self.log, cancel=self.cancel_event, **kwargs)
                 self.log("\n" + self.t("msg_task_done"))
             except Exception as e:
                 self.log("\n" + self.t("msg_task_error", err=e))
@@ -495,6 +654,8 @@ class E621App:
 
     def _on_done(self):
         self.start_btn.config(state="normal")
+        if hasattr(self, "scan_btn"):
+            self.scan_btn.config(state="normal")
         self.stop_btn.config(state="disabled")
         if self.cancel_event.is_set():
             self.status_var.set(self.t("status_stopped"))
@@ -507,7 +668,47 @@ class E621App:
         self.log(self.t("msg_stop_requested"))
 
 
+def _selftest() -> int:
+    """不打开常驻界面的自检：验证依赖是否齐全（打包成 exe 后排查用）。
+
+    结果同时写入 %TEMP%\\e621_selftest.txt —— windowed exe 没有控制台，
+    只能靠文件把结果带出来。
+    """
+    import tempfile
+    lines = []
+    ok = True
+    lines.append("frozen: %s" % getattr(sys, "frozen", False))
+    lines.append("executable: %s" % sys.executable)
+    try:
+        import tkinter
+        root = tkinter.Tk()
+        root.withdraw()
+        root.update()
+        root.destroy()
+        lines.append("tkinter: OK")
+    except Exception as e:
+        ok = False
+        lines.append("tkinter: FAIL %r" % (e,))
+    try:
+        import requests  # noqa: F401
+        lines.append("requests: OK")
+    except Exception as e:
+        ok = False
+        lines.append("requests: FAIL %r" % (e,))
+    text = "\n".join(lines)
+    try:
+        with open(os.path.join(tempfile.gettempdir(), "e621_selftest.txt"),
+                  "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+    except OSError:
+        pass
+    print(text)
+    return 0 if ok else 1
+
+
 def main():
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
     root = tk.Tk()
     E621App(root)
     root.mainloop()
