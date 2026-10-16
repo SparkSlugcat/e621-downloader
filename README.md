@@ -156,6 +156,8 @@ python e6_artist.py --from-manifest e6_artist_manifest.json --pick 2-4
 
 - [felinepaw](https://github.com/SparkSlugcat/felinepaw) —— 覆盖 e621 / e-hentai /
   FurAffinity 等多个站点的命令行下载脚本集合。
+- [e-hentai-paw](https://github.com/SparkSlugcat/e-hentai-paw) —— e-hentai 专用版，
+  同样提供「先扫描、后勾选」的挑着下工作流，命令行与图形界面都有。
 
 ## 许可证
 
@@ -332,6 +334,8 @@ on the **API Access** page in your e621 account settings.
 
 - [felinepaw](https://github.com/SparkSlugcat/felinepaw) — command-line downloader scripts
   covering e621 / e-hentai / FurAffinity and more.
+- [e-hentai-paw](https://github.com/SparkSlugcat/e-hentai-paw) — a dedicated e-hentai downloader
+  offering the same scan-then-pick workflow, as both CLI and GUI.
 
 ## License
 
