@@ -25,12 +25,143 @@
 
 ## 环境要求
 
-- Windows
-- Python 3.8 及以上（图形界面依赖 tkinter，通常随 Python 一同安装）
-- 依赖：`requests`（`pip install requests`）
-- 若不希望安装 Python，可直接使用 Releases 页面提供的独立 exe
+| 项 | 说明 |
+|---|---|
+| 操作系统 | **Windows 10 / 11**（本仓库的 `.bat` 启动器只在 Windows 下有意义） |
+| Python | **3.8 或更新版本**（图形界面依赖 `tkinter`，通常随官方安装包一起装好）。版本管理推荐 [Miniconda](https://docs.conda.io/en/latest/miniconda.html) / [pyenv](https://github.com/pyenv/pyenv) |
+| 第三方库 | `requests`（`pip install requests`） |
+
+最省事的起步：
+
+```bash
+conda create -n e621-gui python=3.9 -y
+conda activate e621-gui
+pip install requests
+```
+
+> 🟢 **没有 Python 环境？** 直接从
+> [Releases](https://github.com/SparkSlugcat/e621-downloader/releases/latest) 下载 `E621Downloader.exe`，
+> 双击即用，**完全不需要装 Python**。下面「快速开始」的方式一就是它。
+
+---
+
+## 🌐 代理端口自定义
+
+> 这一节是**给改了 Clash 端口的用户**的，**90% 的情况你不用看**。
+
+本工具默认连 `http://127.0.0.1:7897`（Clash / Clash Verge / mihomo 的默认混合端口）。
+如果你改了 Clash 的端口（或用 SS / V2RayN / NekoBox / 其他本地代理），改下面这个值：
+
+**方法 1：环境变量（推荐，全局生效）**
+
+```bat
+:: Windows cmd（永久，重开 cmd 生效）
+setx HTTP_PROXY "http://127.0.0.1:你的端口"
+setx HTTPS_PROXY "http://127.0.0.1:你的端口"
+```
+
+**方法 2：GUI 内置代理设置**（在「代理设置」段）
+
+**方法 3：命令行参数（单次生效）**
+
+```bash
+python app.py --proxy http://127.0.0.1:你的端口
+```
+
+## 🆘 启动失败 / 没装好 Python？
+
+如果你**双击 `启动.bat` 看到一堆中文报错**，最常见的就是 Python 环境没配好。两步走。
+
+### Step 1：看报错最关键的一行
+
+| 报错样例 | 含义 | 修法 |
+|---|---|---|
+| `'python' 不是内部或外部命令` | 系统找不到 `python.exe` | 走 §Step 2，配 `PYTHON_EXE` |
+| `ModuleNotFoundError: No module named 'requests'` | Python 找到了，但依赖没装 | `pip install requests` |
+| `DLL load failed while importing _tkinter` | conda 环境缺 tkinter | `conda install -n 你的环境 tk` |
+
+> 🟢 **嫌麻烦？** 直接从 [Releases](https://github.com/SparkSlugcat/e621-downloader/releases/latest)
+> 下载 `E621Downloader.exe`，**完全不需要装 Python**。
+
+### 如果是 `No module named ...`：依赖没装
+
+完整报错一般长这样，**只看最后一行**就够：
+
+```text
+Traceback (most recent call last):
+  File "D:\你的路径\e621_gui\common.py", line 26, in <module>
+    import requests
+ModuleNotFoundError: No module named 'requests'
+```
+
+这个项目只需要一个库：
+
+```bat
+python -m pip install requests
+```
+
+| 容易踩的坑 | 现象 | 怎么办 |
+|---|---|---|
+| 用 `pip install` 而不是 `python -m pip install` | 装完再跑，还是同一个 `No module named` | 电脑上有多个 Python 时，`pip` 可能装到别的上面。**一律用 `python -m pip`** |
+| 装到了另一个 Python 上 | `python -c "import sys; print(sys.executable)"` 打印的路径，跟报错里 `File "...\common.py"` 不是同一个环境 | 用那个环境自己的解释器执行 `-m pip install` |
+| 下载卡住、最后报 `ReadTimeoutError` | pip 一直转圈然后超时 | 换国内镜像：`python -m pip install requests -i https://pypi.tuna.tsinghua.edu.cn/simple` |
+| `'pip' 不是内部或外部命令` | cmd 里根本找不到 pip | 用 `python -m pip`，绕开 PATH |
+
+**装完验证**（打印 `ok` 才算装对）：
+
+```bat
+python -c "import requests; print('ok')"
+```
+
+> 💡 **GUI 窗口能正常打开，但一点「开始」日志框里就冒出 traceback** —— 这就是缺依赖的典型样子
+> （GUI 启动时只需要 `tkinter`，真正干活的是它拉起来的子进程）。
+>
+> 🟢 **完全不想折腾这些？** 直接用 Release 里的 `E621Downloader.exe`，双击就跑，**不需要 Python、不需要装库**。
+
+### Step 2：让脚本知道你的 Python 在哪
+
+如果你**已经有了**一个 Python / conda 环境（环境名不叫 py39 也行，`myenv` / `ai` / `work` 任意都行），
+**不需要改名**——把它的 `python.exe` 完整路径告诉脚本就行。
+
+**永久**（推荐，写到注册表，全局生效）—— 打开任意 cmd，复制粘贴下面这一行（把路径换成你自己的）：
+
+```bat
+:: 1. 先找你的 python.exe 在哪
+where python
+:: 输出类似: C:\Users\你的用户名\miniconda3\envs\myenv\python.exe
+
+:: 2. 把上面那行复制，改造成下面这条，粘到 cmd 里执行
+setx PYTHON_EXE "C:\Users\你的用户名\miniconda3\envs\myenv\python.exe"
+```
+
+`setx` 写注册表，**执行后必须重新打开一个 cmd 才生效**。然后再双击 `启动.bat` 即可。
+
+**临时**（仅当前 cmd）：
+
+```bat
+set PYTHON_EXE=C:\Users\你的用户名\miniconda3\envs\myenv\python.exe
+启动.bat
+```
+
+### 实在找不到 Python 在哪？
+
+打开任意 cmd，敲：
+
+```bat
+where python
+```
+
+输出的**第一行**就是 `python.exe` 的完整路径。把它配到 `PYTHON_EXE` 即可。
+如果 `where python` 一行都没输出，说明你**根本没装 Python**——装一个就行：
+- 官方：https://www.python.org/downloads/（**勾** "Add Python to PATH"）
+- 或 Miniconda：https://docs.conda.io/en/latest/miniconda.html
+
+---
 
 ## 快速开始
+
+> 🟢 **不想装 Python？** 从 [Releases](https://github.com/SparkSlugcat/e621-downloader/releases/latest)
+> 下载 `E621Downloader.exe` 双击即用——下面的方式一就是它。
 
 **方式一**：下载 Releases 页面提供的 exe，直接双击运行，无需安装 Python。
 
@@ -195,12 +326,67 @@ Current version: **v1.1.0**
 
 ## Requirements
 
-- Windows
-- Python 3.8+ (the GUI relies on tkinter, which ships with most Python installs)
-- `requests` (`pip install requests`)
-- Alternatively, use the standalone exe published under Releases — no Python required
+| Item | Notes |
+|---|---|
+| OS | **Windows 10 / 11** (the `.bat` launcher is Windows-only) |
+| Python | **3.8 or newer** (the GUI relies on `tkinter`, which ships with most official Python installs). Version management: [Miniconda](https://docs.conda.io/en/latest/miniconda.html) / [pyenv](https://github.com/pyenv/pyenv) recommended |
+| 3rd-party | `requests` (`pip install requests`) |
+
+Quickest start:
+
+```bash
+conda create -n e621-gui python=3.9 -y
+conda activate e621-gui
+pip install requests
+```
+
+> 🟢 **No Python installed?** Grab `E621Downloader.exe` from
+> [Releases](https://github.com/SparkSlugcat/e621-downloader/releases/latest) and double-click it —
+> **no Python install required**. That's the same binary as "Option 1" below.
+
+---
+
+## 🆘 `No module named ...` — install the dependencies
+
+The full traceback usually looks like this; **only the last line matters**:
+
+```text
+Traceback (most recent call last):
+  File "D:\path\to\e621_gui\common.py", line 26, in <module>
+    import requests
+ModuleNotFoundError: No module named 'requests'
+```
+
+This project needs exactly one library:
+
+```bat
+python -m pip install requests
+```
+
+| Pitfall | Symptom | Fix |
+|---|---|---|
+| Running `pip install` instead of `python -m pip install` | The same `No module named` after "installing" | With several Pythons installed, bare `pip` may install into a different one. **Always use `python -m pip`** |
+| Installed into the wrong interpreter | `python -c "import sys; print(sys.executable)"` prints a path outside the environment shown in the traceback | Run `-m pip install` with that environment's own interpreter |
+| Downloads hang, then `ReadTimeoutError` | pip spins forever and times out | Use a mirror: `python -m pip install requests -i https://pypi.tuna.tsinghua.edu.cn/simple` |
+| `'pip' is not recognized` | pip isn't on PATH | Use `python -m pip` |
+
+Verify (it has to print `ok`):
+
+```bat
+python -c "import requests; print('ok')"
+```
+
+> 💡 **The GUI opens fine, but a traceback shows up in the log the moment you hit Start** — that's the
+> classic missing-dependency symptom (the GUI itself only needs `tkinter`).
+>
+> 🟢 **Don't want to deal with any of this?** Grab `E621Downloader.exe` from Releases — double-click and
+> go, **no Python and no libraries required**.
 
 ## Quick Start
+
+> 🟢 **No Python installed?** Grab `E621Downloader.exe` from
+> [Releases](https://github.com/SparkSlugcat/e621-downloader/releases/latest) and double-click it —
+> that's "Option 1" below.
 
 **Option 1**: download the standalone exe from Releases and run it directly (no Python needed).
 
