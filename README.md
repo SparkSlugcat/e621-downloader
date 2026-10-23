@@ -47,28 +47,43 @@ pip install requests
 
 ---
 
-## 🌐 代理端口自定义
+## 🌐 代理
 
-> 这一节是**给改了 Clash 端口的用户**的，**90% 的情况你不用看**。
+**先问一句：你到底需不需要代理？**
 
-本工具默认连 `http://127.0.0.1:7897`（Clash / Clash Verge / mihomo 的默认混合端口）。
-如果你改了 Clash 的端口（或用 SS / V2RayN / NekoBox / 其他本地代理），改下面这个值：
+| 你的网络 | 怎么办 |
+|---|---|
+| 境外 | e621 基本**直连就通**。代理一栏选「不使用代理」即可 |
+| 中国大陆 | e621 直连不通，**需要代理**。任何 **HTTP** 代理都行 |
 
-**方法 1：环境变量（推荐，全局生效）**
+> **「自动（跟随系统）」不是"默认连某个端口"**：它先读 `HTTP_PROXY` / `HTTPS_PROXY`
+> 环境变量，再读 Windows 系统代理设置；两处都没有就**直连**。
+> 所以代理软件已经开了"系统代理"的话，选「自动」就行，不用手填地址。
+
+**用的不是 Clash 也完全可以。** 只要能提供一个 **HTTP 端口**就行：Clash / mihomo、
+v2rayN、NekoBox、Surge、Proxifier、公司网关都一样。到那个软件的设置里找到端口，
+在「代理」一栏选「自定义…」填进去，例如：
+
+```
+http://127.0.0.1:你的端口
+```
+
+也可以在启动前设环境变量（永久，重开终端后生效）：
 
 ```bat
-:: Windows cmd（永久，重开 cmd 生效）
 setx HTTP_PROXY "http://127.0.0.1:你的端口"
 setx HTTPS_PROXY "http://127.0.0.1:你的端口"
 ```
 
-**方法 2：GUI 内置代理设置**（在「代理设置」段）
-
-**方法 3：命令行参数（单次生效）**
+或者用命令行参数（单次生效）：
 
 ```bash
 python app.py --proxy http://127.0.0.1:你的端口
 ```
+
+> ⚠️ **默认不支持 SOCKS。** 填 `socks5://` 会报 `Missing dependencies for SOCKS support`
+> —— `requests` 认 SOCKS 需要额外的包。两个解法：
+> **① 用客户端的「HTTP / 混合端口」（推荐）**；② `pip install "requests[socks]"`。
 
 ## 🆘 出问题了？
 
@@ -122,11 +137,11 @@ python app.py
 
 ### 代理设置
 
-需要代理才能访问外网时（例如本机运行 Clash 等代理软件），在「代理」一栏选择：
+需要代理才能访问外网时（例如本机跑着代理软件），在「代理」一栏选择：
 
-- **自动（跟随系统）**（默认）：读取 Windows 系统代理设置，例如 `127.0.0.1:7897`
+- **自动（跟随系统）**（默认）：读取 `HTTP_PROXY` / `HTTPS_PROXY` 和 Windows 系统代理设置
 - **不使用代理**：直连，适合可直连 e621 的网络
-- **自定义…**：手动填写代理地址，例如 `http://127.0.0.1:7897`
+- **自定义…**：手动填写代理地址，例如 `http://127.0.0.1:你的端口`
 
 > 中国大陆用户请注意：e621 在中国大陆无法直接访问，请自行准备可用的代理工具，
 > 并在「代理」一栏选择「自动（跟随系统）」或「自定义…」并填写代理地址，否则将无法连接服务器。
@@ -277,6 +292,46 @@ pip install requests
 
 ---
 
+## 🌐 Proxy
+
+**First question: do you need one at all?**
+
+| Your network | What to do |
+|---|---|
+| Outside mainland China | Nothing — e621 is directly reachable. Pick "No proxy" |
+| Mainland China | A proxy is required. **Any HTTP proxy works** |
+
+> **"Auto (follow system)" does not mean "connect to some default port".** It reads
+> `HTTP_PROXY` / `HTTPS_PROXY` first, then the Windows system proxy, and falls back to a
+> **direct** connection if neither is set. If your client already sets the system proxy,
+> "Auto" is all you need.
+
+**Using a client that isn't Clash?** That's fine — anything that exposes an **HTTP** port
+works: Clash / mihomo, v2rayN, NekoBox, Surge, Proxifier, a corporate gateway. Find that
+port in the client and enter it under "Custom...", for example:
+
+```
+http://127.0.0.1:YOUR_PORT
+```
+
+Environment variables also work (persistent, takes effect after reopening the terminal):
+
+```bat
+setx HTTP_PROXY "http://127.0.0.1:YOUR_PORT"
+setx HTTPS_PROXY "http://127.0.0.1:YOUR_PORT"
+```
+
+Or a one-off command-line flag:
+
+```bash
+python app.py --proxy http://127.0.0.1:YOUR_PORT
+```
+
+> ⚠️ **SOCKS is not supported by default.** `socks5://` fails with
+> `Missing dependencies for SOCKS support` — `requests` needs an extra package for it.
+> Either point at the client's **HTTP / mixed port** (recommended), or install
+> `pip install "requests[socks]"`.
+
 ## 🆘 Something broke?
 
 Kept short on purpose — the full guide is **[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md)**:
@@ -331,12 +386,12 @@ python app.py
 
 ### Proxy settings
 
-If a proxy is required (for example, Clash running locally), choose one of the following in
+If a proxy is required (for example, a proxy client running locally), choose one of the following in
 the "Proxy" field:
 
-- **Auto (follow system)** (default): reads the Windows system proxy, e.g. `127.0.0.1:7897`
+- **Auto (follow system)** (default): reads `HTTP_PROXY` / `HTTPS_PROXY` and the Windows system proxy
 - **No proxy**: direct connection, for networks with direct access to e621
-- **Custom…**: enter a proxy address manually, e.g. `http://127.0.0.1:7897`
+- **Custom…**: enter a proxy address manually, e.g. `http://127.0.0.1:YOUR_PORT`
 
 > Users in mainland China: e621 is not directly reachable there. Please set up a working proxy,
 > then choose "Auto (follow system)" or "Custom…" and provide the address, otherwise the

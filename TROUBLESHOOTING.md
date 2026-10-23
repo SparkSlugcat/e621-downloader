@@ -149,19 +149,19 @@ where python
 
 ## 5 代理与网络报错
 
-e621 在中国大陆**无法直接访问**，必须准备可用的代理。「代理」一栏有三个选项：
-**自动（跟随系统）** / **不使用代理** / **自定义…**。
+**先分清你属于哪种情况**：境外网络基本直连就通，中国大陆不挂代理连不上。
+「代理」一栏有三个选项：**自动（跟随系统）** / **不使用代理** / **自定义…**。
+其中「自动」读的是 `HTTP_PROXY` / `HTTPS_PROXY` 环境变量和 Windows 系统代理设置，
+不是某个固定端口。
 
-| 现象 | 含义 | 怎么办 |
+| 现象 | 原因 | 怎么办 |
 |---|---|---|
 | 一直是「连接中」然后超时 | 代理没生效，或节点死了 | 先看日志区开头那行「实际使用的代理」是不是你以为的地址；换节点再试 |
-| 「自动（跟随系统）」不管用 | 系统代理没设，或设了但软件读不到 | 改成「自定义…」手填 `http://127.0.0.1:7897` |
-| 下载到一半大面积失败 | 节点抖了 | 任务会自动重试 `500/502/503/504`；连续失败就先换节点再重跑 |
-| 列表能拉、图片下不动 | 图片走的是另一个 CDN，可能被单独限速 | 降并发、隔一会儿再跑；本工具会跳过已下好的文件 |
+| 「自动（跟随系统）」不管用 | 系统代理没设，或设了但软件读不到 | 改成「自定义…」手填 `http://127.0.0.1:端口` |
+| 提示「不支持 SOCKS 代理」 | 自定义里填了 `socks5://` | 用客户端的 **HTTP / 混合端口**；或 `pip install "requests[socks]"` |
+| 你在境外却连不上 | 可能被本地网络或 DNS 限制 | 选「不使用代理」再试一次 |
 
 > 💡 任务启动时日志区会打印**实际使用的代理**。网络类报错先核对那一行，比猜快得多。
-
----
 
 ## 6 凭据、站点与下载异常
 
@@ -309,15 +309,18 @@ Or skip Python entirely and use `E621Downloader.exe` from Releases.
 
 ## 5 Proxy and network errors
 
-e621 is not directly reachable from mainland China. The Proxy selector has three choices:
-**Auto (follow system)** / **No proxy** / **Custom…**.
+**Work out which case you're in first.** Outside mainland China e621 is directly
+reachable; from mainland China a proxy is required. The Proxy selector has three choices:
+**Auto (follow system)** / **No proxy** / **Custom...**. "Auto" reads the
+`HTTP_PROXY` / `HTTPS_PROXY` environment variables and the Windows system proxy — it does
+not assume any fixed port.
 
-| Symptom | Meaning | Fix |
+| Symptom | Cause | Fix |
 |---|---|---|
 | Stuck on "connecting", then times out | the proxy isn't in effect, or the node is dead | check the "proxy actually used" line at the top of the log; switch nodes and retry |
-| Auto (follow system) does nothing | no system proxy set, or it isn't visible to the app | switch to Custom… and enter `http://127.0.0.1:7897` |
-| Mass failures mid-download | unstable node | requests are retried on `500/502/503/504`; if it keeps failing, switch nodes and re-run |
-| Listing works, images don't download | images come from a separate CDN that may throttle harder | lower concurrency, wait a bit and resume — already-downloaded files are skipped |
+| Auto (follow system) does nothing | no system proxy set, or it isn't visible to the app | switch to Custom... and enter `http://127.0.0.1:PORT` |
+| "SOCKS proxy not supported" | you entered `socks5://` under Custom... | use the client's **HTTP / mixed port**, or `pip install "requests[socks]"` |
+| You're outside mainland China and still can't connect | possibly a local network or DNS restriction | pick "No proxy" and try again |
 
 > 💡 The log prints the **proxy actually used** when a task starts. Check that line before guessing.
 

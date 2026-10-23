@@ -162,6 +162,8 @@ ZH = {
     "msg_init_error": "初始化失败: {err}",
     "msg_proxy_enabled": "已启用代理: {p}",
     "msg_proxy_direct": "未使用代理（直连）",
+    "msg_socks_unsupported": "不支持 SOCKS 代理。请在代理软件里打开「HTTP 端口」或「混合端口」，"
+                             "把那个地址填进「自定义…」（例如 http://127.0.0.1:7890）。",
     "msg_logged_in": "已使用认证信息登录 {site}",
     "msg_guest": "警告：用户名/API Key 为空，以游客身份访问 {site}（部分内容可能受限）",
     "msg_stop_requested": "已请求停止，将在当前下载完成后中止。",
@@ -318,6 +320,9 @@ EN = {
     "msg_init_error": "Initialization failed: {err}",
     "msg_proxy_enabled": "Proxy enabled: {p}",
     "msg_proxy_direct": "No proxy (direct connection)",
+    "msg_socks_unsupported": "SOCKS proxies are not supported. Enable the HTTP (or mixed) port "
+                             "in your proxy client and enter that address under \"Custom...\" "
+                             "(e.g. http://127.0.0.1:7890).",
     "msg_logged_in": "Authenticated to {site}",
     "msg_guest": "Warning: empty username/API key; running as guest on {site} (some content may be restricted)",
     "msg_stop_requested": "Stop requested; will abort after the current download finishes.",

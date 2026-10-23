@@ -620,6 +620,12 @@ class E621App:
                 proxy = self.proxy_custom_var.get().strip() or "off"
             else:
                 proxy = "auto"
+            # requests 自己不认识 socks://：没装 PySocks 时抛的是
+            # `InvalidSchema: Missing dependencies for SOCKS support.`，
+            # 日志里看不出"我们不支持 SOCKS"，只会让人以为代理地址填错。
+            if proxy.lower().startswith("socks"):
+                self.log(self.t("msg_socks_unsupported"))
+                return
             session = core.create_session(user, key, base, proxy=proxy)
 
             if session.proxies:
