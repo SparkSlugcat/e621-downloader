@@ -15,6 +15,9 @@ _CURRENT = "zh"
 ZH = {
     # ---------- 通用 ----------
     "core_cancelled": "已收到停止请求，任务中止。",
+    "core_naming_seq": "命名方式: 顺序编号（{width} 位零填充）",
+    "core_naming_id": "命名方式: 帖子 ID",
+    "core_naming_id_no_reverse": "按帖子 ID 命名时「反转编号」没有意义，已忽略。",
 
     # ---------- 帖子 ID 获取 ----------
     "core_page_fetched": "  第 {page} 页，获取到 {n} 个帖子（累计 {total}）",
@@ -95,13 +98,15 @@ ZH = {
     "core_downloadable": "可下载作品: {n}",
 
     # ---------- 界面 ----------
-    "app_title": "E621 下载器 v1.1.0",
+    "app_title": "E621 下载器 v1.2.0",
     "auth_frame": "认证信息（每次启动填写；用户名和 Key 留空则游客访问）",
     "site_label": "站点:",
     "user_label": "用户名:",
     "key_label": "API Key:",
     "remember": "记住（明文存本地）",
-    "lang_label": "语言:",
+    # 语言选择器自己的标签一律写成双语：不懂当前界面语言的人，恰恰最需要找到它。
+    # 所以 zh / en 两条故意是同一串，不要"翻译"成单一语言。
+    "lang_label": "语言 / Language:",
     "proxy_label": "代理:",
     "proxy_auto": "自动（跟随系统）",
     "proxy_off": "不使用代理",
@@ -113,6 +118,9 @@ ZH = {
     "tab_artist": "③ 艺术家分组下载",
     "tab_pool_seq": "④ Pool 下载（顺序）",
     "tab_pool_rev": "⑤ Pool 下载（反转）",
+    "naming_label": "命名方式:",
+    "naming_seq": "顺序编号（001, 002…）",
+    "naming_id": "帖子 ID",
     "tags_label": "搜索标签:",
     "limit_label": "数量限制（留空=全部）:",
     "out_label": "输出目录（留空=自动）:",
@@ -173,6 +181,9 @@ ZH = {
 EN = {
     # ---------- Common ----------
     "core_cancelled": "Stop requested; task aborted.",
+    "core_naming_seq": "Naming: sequential ({width}-digit zero-padded)",
+    "core_naming_id": "Naming: post ID",
+    "core_naming_id_no_reverse": "Reversed numbering is meaningless with post-ID naming; ignored.",
 
     # ---------- Post ID fetching ----------
     "core_page_fetched": "  Page {page}: got {n} posts (total {total})",
@@ -253,13 +264,13 @@ EN = {
     "core_downloadable": "Downloadable posts: {n}",
 
     # ---------- UI ----------
-    "app_title": "E621 Downloader v1.1.0",
+    "app_title": "E621 Downloader v1.2.0",
     "auth_frame": " Credentials (enter at every launch; leave empty for guest access) ",
     "site_label": "Site:",
     "user_label": "Username:",
     "key_label": "API Key:",
     "remember": "Remember (stored in plain text)",
-    "lang_label": "Language:",
+    "lang_label": "语言 / Language:",
     "proxy_label": "Proxy:",
     "proxy_auto": "Auto (follow system)",
     "proxy_off": "No proxy",
@@ -271,6 +282,9 @@ EN = {
     "tab_artist": "③ Artist grouped download",
     "tab_pool_seq": "④ Pool download (sequential)",
     "tab_pool_rev": "⑤ Pool download (reversed)",
+    "naming_label": "Naming:",
+    "naming_seq": "Sequential (001, 002…)",
+    "naming_id": "Post ID",
     "tags_label": "Search tags:",
     "limit_label": "Count limit (empty = all):",
     "out_label": "Output folder (empty = auto):",

@@ -7,23 +7,26 @@
 图形界面把五种常用下载方式集中在一个窗口内，无需记忆任何命令行参数；命令行脚本适合批量化、
 脚本化，以及需要精确控制下载内容的场景。
 
-当前版本：**v1.1.0**
+当前版本：**v1.2.0**
 
 ## 主要特性
 
 - **官方 API**：通过 e621 JSON API 获取数据；图片默认 4 线程并发下载，API 请求之间保持固定间隔。
 - **五种下载模式**
-  1. 标签下载 —— 按标签下载全部作品，顺序编号
+  1. 标签下载 —— 按标签下载全部作品，零填充顺序编号
   2. 标签分页下载 —— 只下载指定一页
   3. 艺术家分组下载 —— 下载某位艺术家的全部作品，按所属合集分文件夹保存
   4. 合集（Pool）下载（顺序）—— 按合集内顺序编号
   5. 合集（Pool）下载（反转）—— 反转编号，最后一张为 1
+- **可选的文件命名方式**（v1.2.0 新增）：零填充顺序编号（`001`、`002` …）或帖子 ID，
+  在界面底部切换；详见下方「文件命名」。
 - **艺术家模式支持「先扫描、后勾选」**（v1.1.0 新增）：先扫描出该艺术家的全部合集与散图，
   在列表中勾选需要的项后再下载；支持「全选」。命令行对应 `--dry-run` 与 `--pick`。
 - **断点续传**：中断后重新运行，会自动识别并跳过已下载的文件。
 - **凭据安全**：API 用户名与 Key 仅在运行时填写，不写入代码。
 - **代理支持**：可自动跟随系统代理，也可手动指定。
-- **中英双语**：界面与日志可在右上角一键切换。
+- **中英双语**：界面与日志可随时切换。语言选择器的标签写作「语言 / Language:」，
+  无论当前界面是哪种语言都能找到。
 
 ## 环境要求
 
@@ -152,14 +155,32 @@ python app.py
 
 | 模式 | 说明 |
 |---|---|
-| ① 标签下载 | 按标签下载全部作品，顺序编号 `1.jpg, 2.png ...`，可限制数量 |
+| ① 标签下载 | 按标签下载全部作品，零填充顺序编号 `001.jpg, 002.png ...`，可限制数量 |
 | ② 标签分页下载 | 按标签下载，可指定只下载某一页，并可自选每页数量（40/80/120/200/320） |
 | ③ 艺术家分组下载 | 下载某位艺术家的全部作品，按所属合集分文件夹，散图存入 `others` |
-| ④ 合集下载（顺序） | 下载整个合集，按顺序编号 |
+| ④ 合集下载（顺序） | 下载整个合集，按合集内顺序编号 |
 | ⑤ 合集下载（反转） | 下载整个合集，反转编号（最后一张为 1） |
 
 搜索标签支持 e621 的搜索语法，例如 `feline` 或 `feline,order:score`。输出目录留空时，
 会自动以标签名或合集名创建文件夹。
+
+### 文件命名
+
+界面底部的「命名方式」下拉框决定下载文件的文件名，默认使用**顺序编号**：
+
+| 方式 | 文件名示例 | 说明 |
+|---|---|---|
+| 顺序编号（默认） | `001.jpg`、`002.png` … | 至少 3 位零填充；本次超过 999 个时自动加宽（`1000.jpg`） |
+| 帖子 ID | `4610688.jpg` | 以 e621 帖子 ID 命名，跨批次稳定；同一批 ID 位数不一致时按最长位数补零 |
+
+两种方式遵循同一原则：**编号顺序取合集（Pool）自身的排列顺序**。e621 的合集顺序由
+上传者自行调整，可能与作品发布时间不同，因此默认不按 ID 排序。
+
+在「艺术家分组下载」模式下规则固定：合集内使用顺序编号，`others` 文件夹使用帖子 ID
+（散图没有内在顺序，用 ID 更稳定）。
+
+> 切换命名方式不会重命名已下载的旧文件。断点续传能识别两种命名，不会重复下载，
+> 但同一目录里可能出现两种风格的文件，建议一个任务使用一个目录。
 
 ### 艺术家分组下载与「扫描名单」
 
@@ -250,25 +271,28 @@ tool**.
 The GUI brings five common download modes into a single window — no command-line arguments to
 memorise. The command-line script is intended for batch, scripted, or fine-grained use.
 
-Current version: **v1.1.0**
+Current version: **v1.2.0**
 
 ## Features
 
 - **Official API**: fetches data through the e621 JSON API; images download with 4 concurrent
   threads by default, while API requests stay evenly spaced.
 - **Five download modes**
-  1. Tag download — download all posts for a tag, numbered in order
+  1. Tag download — download all posts for a tag, zero-padded sequential numbering
   2. Tag download by page — download a single page only
   3. Artist grouped download — download an artist's works, grouped into folders by pool
   4. Pool download (sequential) — numbered in pool order
   5. Pool download (reversed) — reversed numbering, the last post becomes 1
+- **Selectable file naming** (new in v1.2.0): zero-padded sequence (`001`, `002`, …) or post ID,
+  switchable from the bottom bar; see "File naming" below.
 - **Artist mode supports "scan first, then tick"** (new in v1.1.0): scan the artist's pools and
   loose posts, tick the items you want, then download. A "select all" option is included.
   The command line offers the same via `--dry-run` and `--pick`.
 - **Resume support**: interrupted downloads are recognised and skipped on the next run.
 - **Credential safety**: the API username and key are entered at run time and never hard-coded.
 - **Proxy support**: follow the Windows system proxy automatically, or configure one manually.
-- **Bilingual UI**: switch between 中文 / English from the top-right corner.
+- **Bilingual UI**: switch the interface and log language at any time. The selector is labelled
+  "语言 / Language:" so it stays findable whichever language is active.
 
 ## Requirements
 
@@ -404,14 +428,34 @@ network errors, check this setting first.
 
 | Mode | Description |
 |---|---|
-| ① Tag download | Download all posts for a tag, numbered `1.jpg, 2.png ...`, with an optional count limit |
+| ① Tag download | Download all posts for a tag, zero-padded sequential names `001.jpg, 002.png ...`, with an optional count limit |
 | ② Tag download by page | Download a chosen page, with a selectable page size (40/80/120/200/320) |
 | ③ Artist grouped download | Download an artist's works, grouped by pool; loose posts go to `others` |
-| ④ Pool download (sequential) | Download a whole pool, numbered in order |
+| ④ Pool download (sequential) | Download a whole pool, numbered in pool order |
 | ⑤ Pool download (reversed) | Download a whole pool with reversed numbering (last post becomes 1) |
 
 Search tags accept e621 syntax, e.g. `feline` or `feline,order:score`. When the output folder is
 left empty, one is created automatically from the tag or pool name.
+
+### File naming
+
+The **Naming** dropdown at the bottom of the window controls how downloaded files are named.
+The default is sequential:
+
+| Mode | Example | Notes |
+|---|---|---|
+| Sequential (default) | `001.jpg`, `002.png` … | zero-padded to at least 3 digits; widens automatically past 999 (`1000.jpg`) |
+| Post ID | `4610688.jpg` | uses the e621 post ID, stable across runs; padded to the longest ID in the batch when widths differ |
+
+Both modes follow the same rule: **numbering follows the pool's own order**. Pool order on e621 is
+set by the uploader and may differ from posting time, so IDs are not used for sorting by default.
+
+In **Artist grouped download** the rule is fixed: sequential inside each pool, post ID inside
+`others` (loose posts have no inherent order, and IDs stay stable across runs).
+
+> Switching the naming mode does not rename files already on disk. Resume recognises both styles
+> and will not re-download, but one folder may end up holding a mix of the two. Keeping one
+> directory per task avoids this.
 
 ### Artist grouped download and "Scan list"
 

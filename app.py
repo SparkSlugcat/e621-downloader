@@ -41,11 +41,43 @@ PROXY_KEYS = ("auto", "off", "custom")
 CHECKED = "☑"
 UNCHECKED = "☐"
 
+# 各语言的窗口宽度基准（实测界面需求：中文 1040px、英文 1077px）。
+# 英文文案更长，用同一个宽度会把右侧输入框挤掉。
+_LANG_MIN_WIDTH = {"zh": 1050, "en": 1090}
+
+
+def asset_path(*parts: str) -> str:
+    """取随包资源路径。
+
+    源码运行时资源在脚本目录下；PyInstaller 单文件 exe 会把 --add-data
+    的内容解压到 sys._MEIPASS，必须从那里取，否则打包后找不到文件。
+    """
+    base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, *parts)
+
+
+def set_window_icon(root: tk.Tk) -> bool:
+    """设置窗口 / 任务栏图标。
+
+    注意这和 exe 的文件图标是两件事：文件图标由 PyInstaller --icon 决定，
+    而窗口图标要由程序自己设置，不设就一直是 Tk 默认的羽毛。
+    设置失败不影响使用，静默跳过。
+    """
+    ico = asset_path("assets", "icon.ico")
+    if not os.path.isfile(ico):
+        return False
+    try:
+        root.iconbitmap(default=ico)   # default= 让后续所有 Toplevel 也生效
+        return True
+    except Exception:
+        return False
+
+
 
 class E621App:
     def __init__(self, root: tk.Tk):
         self.root = root
-        root.geometry("940x700")
+        root.geometry("1050x700")
         root.minsize(820, 580)
 
         self.msg_queue = queue.Queue()          # 工作线程 -> 界面 消息队列
@@ -58,12 +90,23 @@ class E621App:
 
         self._init_vars()
         self._load_saved_config()
+        self._apply_window_size()   # 语言会改变界面宽度，先按保存的语言定尺寸
         self._build_ui()
         root.after(100, self._poll_queue)
 
     # ------------------------------------------------------------
     # 工具
     # ------------------------------------------------------------
+    def _apply_window_size(self):
+        """按当前语言确定窗口宽度。
+
+        中英文案宽度差约 40px（实测界面需求：中文 1040px、英文 1077px），
+        原来固定 940 会把最右侧的 API Key 输入框压扁。高度固定 700。
+        """
+        w = _LANG_MIN_WIDTH.get(self.lang_key, 1060)
+        cap = max(940, self.root.winfo_screenwidth() - 80)
+        self.root.geometry("%dx700" % min(w, cap))
+
     def t(self, key: str, **kw) -> str:
         return i18n.t(key, **kw)
 
@@ -124,6 +167,10 @@ class E621App:
         self.proxy_mode_var = tk.StringVar()
         self.proxy_custom_var = tk.StringVar()
 
+        # 命名方式: "seq" = 顺序编号（001, 002…）, "id" = 帖子 id
+        self.naming_key = "seq"
+        self.naming_var = tk.StringVar()
+
         self.tags_var = tk.StringVar()
         self.limit_var = tk.StringVar()
         self.out1_var = tk.StringVar()
@@ -173,6 +220,10 @@ class E621App:
             self.log_text.configure(state="normal")
             self.log_text.insert("1.0", log_text)
             self.log_text.configure(state="disabled")
+
+        # 尺寸要等 pack/grid 全部算完才准（此刻量到的还是初始值），
+        # 所以挂到空闲回调里再做。
+        self.root.after_idle(self._apply_window_size)
 
         running = bool(self.worker and self.worker.is_alive())
         if running:
@@ -352,6 +403,15 @@ class E621App:
         self.stop_btn.pack(side="left", padx=8)
         ttk.Label(bar, textvariable=self.status_var).pack(side="left", padx=12)
 
+        # 命名方式（作用于「标签下载」与两个「Pool」选项卡；艺术家模式固定按 id）
+        ttk.Label(bar, text=self.t("naming_label")).pack(side="left", padx=(14, 2))
+        self.naming_var.set(self.t("naming_" + self.naming_key))
+        naming_cb = ttk.Combobox(bar, textvariable=self.naming_var, width=20,
+                                 state="readonly",
+                                 values=[self.t("naming_seq"), self.t("naming_id")])
+        naming_cb.pack(side="left")
+        naming_cb.bind("<<ComboboxSelected>>", self._on_naming_change)
+
     def _build_log(self):
         frame = ttk.LabelFrame(self.root, text=self.t("log_frame"))
         frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -380,6 +440,9 @@ class E621App:
     def _on_proxy_mode(self, event=None):
         custom = self._current_proxy_key() == "custom"
         self.proxy_entry.config(state="normal" if custom else "disabled")
+
+    def _on_naming_change(self, event=None):
+        self.naming_key = "id" if self.naming_var.get() == self.t("naming_id") else "seq"
 
     def _pick_dir(self, var: tk.StringVar):
         d = filedialog.askdirectory(title=self.t("out_label"))
@@ -546,7 +609,7 @@ class E621App:
             out = self.out1_var.get().strip()
             return (core.download_by_tags,
                     dict(tags=tags, output_dir=out or None, limit=limit, page=None,
-                         workers=4),
+                         workers=4, naming=self.naming_key),
                     out)
 
         if tab == 1:    # 标签分页下载
@@ -561,7 +624,7 @@ class E621App:
             out = self.out2_var.get().strip()
             return (core.download_by_tags,
                     dict(tags=tags, output_dir=out or None, limit=None, page=page,
-                         page_size=page_size, workers=4),
+                         page_size=page_size, workers=4, naming=self.naming_key),
                     out)
 
         if tab == 2:    # 艺术家分组下载
@@ -580,7 +643,8 @@ class E621App:
                 raise ValueError(self.t("msg_need_pool"))
             out = self.out4_var.get().strip()
             return (core.download_pool,
-                    dict(pool_url=url, output_dir=out or None, reverse=False, workers=4),
+                    dict(pool_url=url, output_dir=out or None, reverse=False, workers=4,
+                         naming=self.naming_key),
                     out)
 
         if tab == 4:    # Pool 反转
@@ -589,7 +653,8 @@ class E621App:
                 raise ValueError(self.t("msg_need_pool"))
             out = self.out5_var.get().strip()
             return (core.download_pool,
-                    dict(pool_url=url, output_dir=out or None, reverse=True, workers=4),
+                    dict(pool_url=url, output_dir=out or None, reverse=True, workers=4,
+                         naming=self.naming_key),
                     out)
 
         raise ValueError(self.t("msg_unknown_tab"))
@@ -690,6 +755,9 @@ def _selftest() -> int:
         root = tkinter.Tk()
         root.withdraw()
         root.update()
+        # 顺带验证图标资源是否随包带上了（缺了不影响功能，只是显示 Tk 默认图标）
+        lines.append("window icon: %s" % ("OK" if set_window_icon(root)
+                                         else "MISSING assets/icon.ico"))
         root.destroy()
         lines.append("tkinter: OK")
     except Exception as e:
@@ -716,6 +784,7 @@ def main():
     if "--selftest" in sys.argv:
         sys.exit(_selftest())
     root = tk.Tk()
+    set_window_icon(root)
     E621App(root)
     root.mainloop()
 

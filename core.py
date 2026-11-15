@@ -175,21 +175,87 @@ def extract_pool_id(pool_url: str) -> str:
     raise ValueError(i18n.t("core_pool_url_invalid", url=pool_url))
 
 
-def find_existing_max(out_dir: Path) -> int:
-    """扫描目录中已有的数字文件名，返回最大序号（用于断点续传）。"""
+def find_existing_max(out_dir: Path, max_width: int = 5) -> int:
+    """扫描目录中已有的**序号**文件名，返回最大序号（用于断点续传）。
+
+    max_width: 只认位数不超过它的纯数字文件名。
+    帖子 id 现在是 6~7 位，若同一目录里混着「按 id 命名」的文件，
+    不限制位数会把 1234567 当成序号 -> existing_max 变成上百万 -> 续传逻辑全崩。
+    """
     max_num = 0
     try:
         for f in out_dir.iterdir():
-            if f.is_file() and f.stem.isdigit():
-                try:
-                    n = int(f.stem)
-                except ValueError:
-                    continue
-                if n > max_num:
-                    max_num = n
+            if not f.is_file() or not f.stem.isdigit():
+                continue
+            if len(f.stem) > max_width:
+                continue
+            try:
+                n = int(f.stem)
+            except ValueError:
+                continue
+            if n > max_num:
+                max_num = n
     except OSError:
         pass
     return max_num
+
+
+# ============================================================
+# 文件命名（顺序编号 / 帖子 id）
+# ============================================================
+
+NAMING_SEQ = "seq"
+NAMING_ID = "id"
+
+
+def seq_width(total: int) -> int:
+    """顺序命名的零填充宽度：至少 3 位，够放下本批次总数（1000 张 -> 4 位）。"""
+    return max(3, len(str(max(total, 1))))
+
+
+def detect_seq_width(out_dir: Path, total: int) -> int:
+    """本批次实际用几位零填充。
+
+    除了按总数算，还要**沿用目录里已有序号文件的宽度**：否则同一个目录
+    续传到跨 10 的幂时（999 张 -> 1000 张）宽度从 3 变 4，
+    001 和 1000 并存，靠文件名排序的地方就会错位。
+
+    只统计 ≤5 位的文件 —— 帖子 id 是 6~7 位，不能当成序号（同上）。
+    """
+    width = seq_width(total)
+    try:
+        for f in out_dir.iterdir():
+            if f.is_file() and f.stem.isdigit() and len(f.stem) <= 5:
+                width = max(width, len(f.stem))
+    except OSError:
+        pass
+    return width
+
+
+def id_width_for(pids) -> int:
+    """按本批次最大 id 的位数补零，让纯字符串排序和数值排序一致。
+
+    e621 的 id 是 6 位和 7 位混着的，直接按 id 命名会出现
+    「999999.png 排在 2934914.png 后面」——补零之后就不会了。
+    """
+    pids = list(pids)
+    if not pids:
+        return 0
+    return len(str(max(pids)))
+
+
+def build_filename(index: int, pid: int, ext: str, width: int, naming: str,
+                   id_width: int = 0) -> str:
+    """按选择的命名方式生成文件名。
+
+    naming="id"  : 用帖子 id；id_width 非 0 时补零到该宽度（跨批次稳定、天然去重）
+    naming="seq" : 顺序编号，零填充到 width 位（001, 002 ...）
+    """
+    if naming == NAMING_ID:
+        if id_width:
+            return f"{pid:0{id_width}d}.{ext}"
+        return f"{pid}.{ext}"
+    return f"{index:0{width}d}.{ext}"
 
 
 def _cancelled(cancel: CancelEvent, log: LogFunc = print) -> bool:
@@ -347,8 +413,12 @@ def download_by_tags(session: requests.Session, tags: str,
                      output_dir: Optional[str] = None,
                      limit: Optional[int] = None, page: Optional[int] = None,
                      page_size: Optional[int] = None, workers: int = 4,
-                     log: LogFunc = print, cancel: CancelEvent = None) -> bool:
-    """下载匹配标签的所有图片，按 1.jpg, 2.png ... 顺序编号。
+                     log: LogFunc = print, cancel: CancelEvent = None,
+                     naming: str = NAMING_SEQ) -> bool:
+    """下载匹配标签的所有图片。
+
+    naming="seq"（默认）: 顺序编号，零填充到够放下总数的位数（001.jpg, 002.png ...）
+    naming="id"         : 直接用帖子 id 命名（1234567.jpg），跨批次天然去重
 
     workers=1 时为顺序下载（等价原 e6_scraper.py）；
     workers>1 时为并发下载（等价原 e6_taged_page_scraper.py）。
@@ -378,10 +448,18 @@ def download_by_tags(session: requests.Session, tags: str,
         log(i18n.t("core_no_images"))
         return False
 
-    existing_max = find_existing_max(out)
+    batch_total = len(downloadable)
+    width = detect_seq_width(out, batch_total) if naming == NAMING_SEQ else 0
+    id_width = id_width_for(p[0] for p in downloadable) if naming == NAMING_ID else 0
+    # id 命名不走序号续传：已有文件靠 filepath.exists() 判断，本来就是断点续传
+    existing_max = find_existing_max(out, width) if naming == NAMING_SEQ else 0
     start_index = existing_max + 1
-    if existing_max > 0:
-        log(i18n.t("core_resume_from", n=existing_max, m=start_index))
+    if naming == NAMING_SEQ:
+        log(i18n.t("core_naming_seq", width=width))
+        if existing_max > 0:
+            log(i18n.t("core_resume_from", n=existing_max, m=start_index))
+    else:
+        log(i18n.t("core_naming_id"))
 
     downloaded = skipped = 0
     download_failed: List[int] = []
@@ -392,10 +470,11 @@ def download_by_tags(session: requests.Session, tags: str,
         for idx, (pid, url, ext) in enumerate(downloadable):
             if _cancelled(cancel, log):
                 break
-            if idx < existing_max:
+            if naming == NAMING_SEQ and idx < existing_max:
                 continue
-            target_index = start_index + (idx - existing_max)
-            filepath = out / f"{target_index}.{ext}"
+            target_index = (start_index + (idx - existing_max)
+                            if naming == NAMING_SEQ else idx + 1)
+            filepath = out / build_filename(target_index, pid, ext, width, naming, id_width)
             if filepath.exists():
                 log(i18n.t("core_task_exists", i=target_index,
                            total=len(downloadable), pid=pid, name=filepath.name))
@@ -440,10 +519,11 @@ def download_by_tags(session: requests.Session, tags: str,
         for idx, (pid, url, ext) in enumerate(downloadable):
             if _cancelled(cancel, log):
                 break
-            if idx < existing_max:
+            if naming == NAMING_SEQ and idx < existing_max:
                 continue
-            target_index = start_index + (idx - existing_max)
-            filename = f"{target_index}.{ext}"
+            target_index = (start_index + (idx - existing_max)
+                            if naming == NAMING_SEQ else idx + 1)
+            filename = build_filename(target_index, pid, ext, width, naming, id_width)
             filepath = out / filename
             if filepath.exists():
                 log(i18n.t("core_task_exists", i=target_index,
@@ -491,8 +571,13 @@ def download_by_tags(session: requests.Session, tags: str,
 
 def download_posts_to_dir(session: requests.Session, post_ids: List[int],
                           out_dir: Path, log: LogFunc = print,
-                          cancel: CancelEvent = None) -> None:
-    """把一批帖子下载到指定目录（并发 4 线程），文件名为帖子 ID。"""
+                          cancel: CancelEvent = None,
+                          naming: str = NAMING_ID) -> None:
+    """把一批帖子下载到指定目录（并发 4 线程）。
+
+    naming="id"（默认）: 文件名 = 帖子 id，补零到本批次最大 id 的位数
+    naming="seq"       : 文件名 = 顺序编号（001, 002 ...），按 post_ids 的顺序
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     details: List[dict] = []
     for i in range(0, len(post_ids), POSTS_PER_REQUEST):
@@ -509,7 +594,18 @@ def download_posts_to_dir(session: requests.Session, post_ids: List[int],
         log(i18n.t("core_no_post_info"))
         return
 
-    def dl_one(post: dict):
+    # API 是 id 降序返回的，顺序命名必须按调用方给的 post_ids 排
+    order = {pid: i for i, pid in enumerate(post_ids)}
+    details.sort(key=lambda p: order.get(p.get("id"), len(post_ids)))
+
+    if naming == NAMING_SEQ:
+        width = seq_width(len(details))
+        id_width = 0
+    else:
+        width = 0
+        id_width = id_width_for(p.get("id") for p in details)
+
+    def dl_one(idx: int, post: dict):
         pid = post.get("id")
         file_url = (post.get("file") or {}).get("url")
         ext = (post.get("file") or {}).get("ext", "jpg")
@@ -519,7 +615,7 @@ def download_posts_to_dir(session: requests.Session, post_ids: List[int],
             ext = sample.get("ext") or ext or "jpg"
         if not file_url:
             return False, pid
-        filepath = out_dir / f"{pid}.{ext}"
+        filepath = out_dir / build_filename(idx, pid, ext, width, naming, id_width)
         if filepath.exists():
             return True, pid
         try:
@@ -541,7 +637,7 @@ def download_posts_to_dir(session: requests.Session, post_ids: List[int],
 
     success = fail = 0
     with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = [executor.submit(dl_one, p) for p in details]
+        futures = [executor.submit(dl_one, i, p) for i, p in enumerate(details, 1)]
         for future in as_completed(futures):
             ok, _ = future.result()
             if ok:
@@ -684,7 +780,11 @@ def download_artist_items(session: requests.Session, items: List[dict],
 
         if not post_ids:
             continue
-        download_posts_to_dir(session, post_ids, root_dir / sub, log=log, cancel=cancel)
+        # pool 有作者排好的阅读顺序 -> 用 001 这种顺序编号；
+        # others 是散图合集、没有内在顺序 -> 用帖子 id（跨批次稳定）
+        item_naming = NAMING_SEQ if it["kind"] == "pool" else NAMING_ID
+        download_posts_to_dir(session, post_ids, root_dir / sub, log=log, cancel=cancel,
+                              naming=item_naming)
 
     log("\n" + i18n.t("core_all_done", path=root_dir.resolve()))
     return True
@@ -719,13 +819,22 @@ def download_artist(session: requests.Session, artist_tag: str,
 def download_pool(session: requests.Session, pool_url: str,
                   output_dir: Optional[str] = None, reverse: bool = False,
                   workers: int = 4,
-                  log: LogFunc = print, cancel: CancelEvent = None) -> bool:
+                  log: LogFunc = print, cancel: CancelEvent = None,
+                  naming: str = NAMING_SEQ) -> bool:
     """下载指定 Pool 中的所有图片，支持断点续传。
+
+    naming="seq"（默认）: 顺序编号，零填充到够放下总数的位数，按 pool 内顺序排
+    naming="id"         : 直接用帖子 id 命名；此时 reverse 无意义（会被忽略），
+                          因为反转只是换个序号起点，id 本身是固定的
 
     reverse=False 时顺序编号（等价原 pool_scraper.py）；
     reverse=True  时反转编号，最后一张 -> 1.jpg（等价原 e621.py）。
     workers>1 时并发下载图片（API 请求仍保持串行与间隔）。
     """
+    if naming == NAMING_ID and reverse:
+        log(i18n.t("core_naming_id_no_reverse"))
+        reverse = False
+
     pool_url = (pool_url or "").strip()
     try:
         pool_id = extract_pool_id(pool_url)
@@ -761,13 +870,26 @@ def download_pool(session: requests.Session, pool_url: str,
         log(i18n.t("core_no_downloadable"))
         return False
 
-    existing_max = find_existing_max(out)
+    # build_downloadable 的顺序来自 API（实测 id: 查询是**降序**返回的），
+    # 而 pool 有自己的 post_ids 顺序（作者可拖拽调整）。不按 pool 顺序重排，
+    # 「顺序编号」实际排的是 id 倒序 —— 001 会变成池子的最后一张。
+    order = {pid: i for i, pid in enumerate(post_ids)}
+    downloadable.sort(key=lambda t: order.get(t[0], len(post_ids)))
+
+    batch_total = len(downloadable)
+    width = detect_seq_width(out, batch_total) if naming == NAMING_SEQ else 0
+    id_width = id_width_for(p[0] for p in downloadable) if naming == NAMING_ID else 0
+    existing_max = find_existing_max(out, width) if naming == NAMING_SEQ else 0
     start_index = existing_max + 1
-    if existing_max > 0:
-        log(i18n.t("core_resume_rev", n=existing_max, m=start_index,
-                   rev=(i18n.t("core_rev_suffix") if reverse else "")))
-    elif reverse:
-        log(i18n.t("core_rev_start"))
+    if naming == NAMING_SEQ:
+        log(i18n.t("core_naming_seq", width=width))
+        if existing_max > 0:
+            log(i18n.t("core_resume_rev", n=existing_max, m=start_index,
+                       rev=(i18n.t("core_rev_suffix") if reverse else "")))
+        elif reverse:
+            log(i18n.t("core_rev_start"))
+    else:
+        log(i18n.t("core_naming_id"))
 
     downloaded = skipped = 0
     download_failed: List[int] = []
@@ -779,11 +901,12 @@ def download_pool(session: requests.Session, pool_url: str,
         for pid, url, ext in reversed(downloadable):
             if _cancelled(cancel, log):
                 break
-            if processed_count < existing_max:      # 续传跳过已完成作品
+            if naming == NAMING_SEQ and processed_count < existing_max:
                 processed_count += 1
                 continue
-            target_index = start_index + (processed_count - existing_max)
-            filepath = out / f"{target_index}.{ext}"
+            target_index = (start_index + (processed_count - existing_max)
+                            if naming == NAMING_SEQ else processed_count + 1)
+            filepath = out / build_filename(target_index, pid, ext, width, naming, id_width)
             if filepath.exists():
                 log(i18n.t("core_post_exists", i=target_index,
                            total=len(downloadable), pid=pid, name=filepath.name))
@@ -797,10 +920,11 @@ def download_pool(session: requests.Session, pool_url: str,
         for idx, (pid, url, ext) in enumerate(downloadable):
             if _cancelled(cancel, log):
                 break
-            if idx < existing_max:                  # 续传跳过已完成作品
+            if naming == NAMING_SEQ and idx < existing_max:
                 continue
-            target_index = start_index + (idx - existing_max)
-            filepath = out / f"{target_index}.{ext}"
+            target_index = (start_index + (idx - existing_max)
+                            if naming == NAMING_SEQ else idx + 1)
+            filepath = out / build_filename(target_index, pid, ext, width, naming, id_width)
             if filepath.exists():
                 log(i18n.t("core_post_exists", i=target_index,
                            total=len(downloadable), pid=pid, name=filepath.name))
