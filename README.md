@@ -7,7 +7,7 @@
 图形界面把五种常用下载方式集中在一个窗口内，无需记忆任何命令行参数；命令行脚本适合批量化、
 脚本化，以及需要精确控制下载内容的场景。
 
-当前版本：**v1.2.0**
+当前版本：**v1.2.1**
 
 ## 主要特性
 
@@ -271,7 +271,7 @@ tool**.
 The GUI brings five common download modes into a single window — no command-line arguments to
 memorise. The command-line script is intended for batch, scripted, or fine-grained use.
 
-Current version: **v1.2.0**
+Current version: **v1.2.1**
 
 ## Features
 

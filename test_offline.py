@@ -68,6 +68,40 @@ class FakeBigIdSession(FakeSession):
                               "post_ids": [600001, 7001002]}}
 
 
+class FakeNewApiSession(FakeSession):
+    """2026-11 起的新接口：posts.json 顶层是数组，URL 在 files.original.url。
+
+    单条 pool 仍是裸 dict（不像旧版那样套一层 {"pool": ...}）。
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.raw_posts = [
+            {"id": 2001, "files": {"meta": {"ext": "png"},
+                                   "original": {"url": "https://cdn/n2001.png"}},
+             "pools": [7]},
+            {"id": 2002, "files": {"meta": {"ext": "jpg"},
+                                   "original": {"url": "https://cdn/n2002.jpg"}},
+             "pools": [7]},
+            # 原图拿不到，只能降级到 sample
+            {"id": 2003, "files": {"meta": {"ext": "png"},
+                                   "sample": {"jpg": "https://cdn/n2003s.jpg",
+                                              "webp": "https://cdn/n2003s.webp"}}},
+        ]
+        self.pool = {"id": 7, "name": "new_api", "post_ids": [2001, 2002, 2003]}
+
+    def get(self, url, params=None, stream=False, timeout=None):
+        if url.endswith("/posts.json"):
+            tags = (params or {}).get("tags", "")
+            if tags.startswith("id:"):
+                ids = [int(x) for x in tags[3:].split(",")]
+                return FakeResp([p for p in self.raw_posts if p["id"] in ids])
+            return FakeResp(self.raw_posts)     # 顶层直接是数组
+        if "pools/" in url:
+            return FakeResp(self.pool)
+        return FakeResp({})
+
+
 class FakeShuffledPoolSession(FakeSession):
     """pool 的 post_ids 和 API 返回顺序不同，验证顺序命名按 post_ids 排。"""
 
@@ -257,6 +291,37 @@ def main():
     print("[pool order    ]", got16)
     # 1002 是 jpg -> 001.jpg；1001 是 png -> 002.png；1003 是 jpg -> 003.jpg
     assert got16 == ["001.jpg", "002.png", "003.jpg"], got16
+
+    # 关键回归：e621 2026-11 换了接口（顶层数组 + files.original.url）
+    # 旧代码在这里会崩 'list' object has no attribute 'get'
+    s5 = FakeNewApiSession()
+    out17 = Path(tempfile.mkdtemp())
+    core.download_by_tags(s5, "newapi", output_dir=str(out17), limit=10,
+                          log=logs.append)
+    got17 = names(out17)
+    print("[new api tags  ]", got17)
+    # 2003 只有 sample.jpg -> 003.jpg
+    assert got17 == ["001.png", "002.jpg", "003.jpg"], got17
+
+    out18 = Path(tempfile.mkdtemp())
+    core.download_pool(s5, "https://e621.net/pools/12345", output_dir=str(out18),
+                       log=logs.append, naming="seq")
+    got18 = names(out18)
+    print("[new api pool  ]", got18)
+    assert got18 == ["001.png", "002.jpg", "003.jpg"], got18
+
+    # 解析函数本身：两种结构都要认
+    assert core.iter_posts([{"id": 1}, {"id": 2}]) == [{"id": 1}, {"id": 2}]
+    assert core.iter_posts({"posts": [{"id": 1}]}) == [{"id": 1}]
+    assert core.iter_posts({"posts": "bad"}) == []
+    assert core.iter_posts({}) == []
+    assert core.get_download_url({"files": {"meta": {"ext": "png"},
+                                            "original": {"url": "u"}}}) == ("u", "png")
+    assert core.get_download_url({"file": {"url": "o", "ext": "jpg"}}) == ("o", "jpg")
+    assert core.get_download_url(
+        {"files": {"meta": {"ext": "png"}, "sample": {"jpg": "s.jpg"}}}) == ("s.jpg", "jpg")
+    assert core.get_download_url({"files": {"meta": {"ext": "png"}}}) == (None, None)
+    print("[api shapes    ] ok")
 
     print("\nALL OFFLINE TESTS PASSED")
 

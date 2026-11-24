@@ -269,6 +269,21 @@ def _cancelled(cancel: CancelEvent, log: LogFunc = print) -> bool:
 # API 请求
 # ============================================================
 
+def iter_posts(data) -> List[dict]:
+    """从 /posts.json 的响应里取出帖子列表。
+
+    e621 在 2026-11 把 posts 接口改成顶层直接返回数组（旧的 {"posts": [...]}
+    结构不再出现）。两种都认，以后要是又改回去也不至于再崩一次。
+    """
+    if isinstance(data, list):
+        return [p for p in data if isinstance(p, dict)]
+    if isinstance(data, dict):
+        posts = data.get("posts")
+        if isinstance(posts, list):
+            return [p for p in posts if isinstance(p, dict)]
+    return []
+
+
 def fetch_post_ids(session: requests.Session, tags: str,
                    limit: Optional[int] = None, page: Optional[int] = None,
                    page_size: Optional[int] = None,
@@ -301,7 +316,7 @@ def fetch_post_ids(session: requests.Session, tags: str,
                                timeout=REQUEST_TIMEOUT)
             resp.raise_for_status()
             data = resp.json()
-            posts = data.get("posts", [])
+            posts = iter_posts(data)
             consecutive_failures = 0
             if not posts:
                 break
@@ -344,11 +359,29 @@ def fetch_posts_batch(session: requests.Session, post_ids: List[int]) -> List[di
                        timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     data = resp.json()
-    return data.get("posts", [])
+    return iter_posts(data)
 
 
 def get_download_url(post: dict) -> Tuple[Optional[str], Optional[str]]:
-    """提取可下载 URL 和扩展名。优先 file.url，其次 sample.url。"""
+    """提取可下载 URL 和扩展名。
+
+    新结构（2026-11 起）：files.original.url + files.meta.ext；
+    旧结构（保留兼容）：file.url + file.ext，其次 sample.url。
+    原图缺失时退回 sample（优先 jpg，其次 webp）。
+    """
+    files = post.get("files")
+    if isinstance(files, dict):
+        original = files.get("original") or {}
+        url = original.get("url")
+        if url:
+            return url, (files.get("meta") or {}).get("ext")
+        sample = files.get("sample") or {}
+        if sample.get("jpg"):
+            return sample["jpg"], "jpg"
+        if sample.get("webp"):
+            return sample["webp"], "webp"
+        return None, None
+
     file_data = post.get("file") or {}
     url = file_data.get("url")
     ext = file_data.get("ext")
@@ -607,15 +640,10 @@ def download_posts_to_dir(session: requests.Session, post_ids: List[int],
 
     def dl_one(idx: int, post: dict):
         pid = post.get("id")
-        file_url = (post.get("file") or {}).get("url")
-        ext = (post.get("file") or {}).get("ext", "jpg")
-        if not file_url:
-            sample = post.get("sample") or {}
-            file_url = sample.get("url")
-            ext = sample.get("ext") or ext or "jpg"
+        file_url, ext = get_download_url(post)
         if not file_url:
             return False, pid
-        filepath = out_dir / build_filename(idx, pid, ext, width, naming, id_width)
+        filepath = out_dir / build_filename(idx, pid, ext or "jpg", width, naming, id_width)
         if filepath.exists():
             return True, pid
         try:
@@ -828,7 +856,7 @@ def download_pool(session: requests.Session, pool_url: str,
                           因为反转只是换个序号起点，id 本身是固定的
 
     reverse=False 时顺序编号（等价原 pool_scraper.py）；
-    reverse=True  时反转编号，最后一张 -> 1.jpg（等价原 e621.py）。
+    reverse=True  时反转编号，最后一张 -> 001.jpg（等价原 e621.py）。
     workers>1 时并发下载图片（API 请求仍保持串行与间隔）。
     """
     if naming == NAMING_ID and reverse:
@@ -896,7 +924,7 @@ def download_pool(session: requests.Session, pool_url: str,
     tasks: List[Tuple[int, int, str, Path]] = []   # (target_index, pid, url, filepath)
 
     if reverse:
-        # ---------- 反转编号：最后一张 -> 1.jpg ----------
+        # ---------- 反转编号：最后一张 -> 001.jpg ----------
         processed_count = 0
         for pid, url, ext in reversed(downloadable):
             if _cancelled(cancel, log):
@@ -916,7 +944,7 @@ def download_pool(session: requests.Session, pool_url: str,
             tasks.append((target_index, pid, url, filepath))
             processed_count += 1
     else:
-        # ---------- 顺序编号：1.jpg, 2.png ... ----------
+        # ---------- 顺序编号：001.jpg, 002.png ... ----------
         for idx, (pid, url, ext) in enumerate(downloadable):
             if _cancelled(cancel, log):
                 break
