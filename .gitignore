@@ -5,7 +5,8 @@ __pycache__/
 
 # 打包产物（PyInstaller）
 dist/
-dist_new/          # 旧 exe 被占用时的备用输出目录
+# 旧 exe 被占用时的备用输出目录
+dist_new/
 build/
 *.spec
 _pyi_env/
